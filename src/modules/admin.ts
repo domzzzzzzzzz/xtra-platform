@@ -10,7 +10,7 @@ import { paymobEnabled } from '../integrations/paymob.js';
 import { slugify } from '../lib/codes.js';
 import { conflict, notFound, badRequest } from '../lib/errors.js';
 import { FEATURES } from '../lib/access.js';
-import { send } from '../integrations/notify.js';
+import { emailReady, send } from '../integrations/notify.js';
 
 export async function getPlatformSettings() {
   const [s] = await db.select().from(schema.platformSettings).where(eq(schema.platformSettings.id, 1));
@@ -27,7 +27,7 @@ export default async function admin(app: FastifyInstance) {
     return {
       bookingFeeBps: s.bookingFeeBps, feeVatBps: s.feeVatBps,
       integrations: {
-        paymob: paymobEnabled(), whatsapp: Boolean(config.whatsapp.token && config.whatsapp.phoneNumberId), email: Boolean(config.email.resendKey),
+        paymob: paymobEnabled(), whatsapp: Boolean(config.whatsapp.token && config.whatsapp.phoneNumberId), email: emailReady(),
         googleWallet: googleWalletReady(), appleWallet: appleWalletReady(),
       },
     };

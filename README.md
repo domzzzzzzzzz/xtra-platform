@@ -137,4 +137,4 @@ WhatsApp only lets a business start a chat with a Meta-approved template, so eve
 | `xtra_ticket` | Utility | name, event, venue, when |
 | `xtra_visit_thanks`, `xtra_birthday`, `xtra_winback` | Marketing | name, venue |
 
-`WHATSAPP_TEMPLATE_LANGUAGE` (default `en`) sets the language code. XTRA admins can check a channel with `POST /api/admin/test-message {channel, to}`; WhatsApp uses Meta's `hello_world` template unless `template` is given. Email goes through Resend from `EMAIL_FROM` (for example `XTRA <no-reply@mail.xtratickets.com>` on a domain verified in Resend).
+`WHATSAPP_TEMPLATE_LANGUAGE` (default `en`) sets the language code. XTRA admins can check a channel with `POST /api/admin/test-message {channel, to}`; WhatsApp uses Meta's `hello_world` template unless `template` is given. Email goes by SMTP when `MAIL_HOST`, `MAIL_USERNAME` and `MAIL_PASSWORD` are set (also `MAIL_PORT`, default 465, `MAIL_FROM`, `MAIL_SSL_ENABLE`, default true, `MAIL_STARTTLS_ENABLE`, default false), for example a Hostinger mailbox. Otherwise it goes through Resend (`RESEND_API_KEY`, `EMAIL_FROM`), and with neither it is only logged.
