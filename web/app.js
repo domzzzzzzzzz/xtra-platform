@@ -251,7 +251,7 @@ const egp2=n=>'EGP'+NB+(Math.round(n*100)/100).toLocaleString('en-US',{maximumFr
 const first=b=>G(b.gid).name.split(' ')[0];
 
 /* ---------- shell ---------- */
-const NAV=[['floor','Floor','floor','Tonight'],['bookings','Bookings','bookings','Tonight'],['door','Door','door','Tonight'],['orders','Orders','orders','Tonight'],['events','Events','events','Grow'],['marketing','Marketing','marketing','Grow'],['guests','Guests','guests','Grow'],['community','Community','community','Grow'],['reports','Reports','reports','Grow'],['page','Booking page','page','Set up'],['editor','Floor map','editor','Set up'],['setup','Venue setup','setup','Set up'],['admin','XTRA admin','admin','XTRA']];
+const NAV=[['floor','Floor','floor','Tonight'],['bookings','Bookings','bookings','Tonight'],['door','Door','door','Tonight'],['orders','Orders','orders','Tonight'],['events','Events','events','Grow'],['marketing','Marketing','marketing','Grow'],['guests','Guests','guests','Grow'],['community','Community','community','Grow'],['messages','Messages','messages','Grow'],['reports','Reports','reports','Grow'],['page','Booking page','page','Set up'],['editor','Floor map','editor','Set up'],['setup','Venue setup','setup','Set up'],['admin','XTRA admin','admin','XTRA']];
 /** What this person may open at the current venue (from /auth/me, already limited by the venue's features). */
 const PERMS_NOW=()=>ME.venues[S.vi]?.perms||[],FEAT_NOW=()=>ME.venues[S.vi]?.features||[];
 const CAN=p=>p==='admin'?!!ME.user.isSuperAdmin:p==='page'?PERMS_NOW().includes('setup')&&FEAT_NOW().includes('reservations'):PERMS_NOW().includes(p);
@@ -259,12 +259,12 @@ const HAS=f=>FEAT_NOW().includes(f);
 const ROLES={manager:'Manager',door:'Door',waiter:'Waiter'};
 const ROLE_NAME={owner:'Owner',manager:'Manager',door:'Door',waiter:'Waiter'};
 const whoBox=()=>`<div class="role">Signed in</div><div class="who"><b>${esc(ME.user.name)}</b><span class="mute">${esc(ME.user.isSuperAdmin?'XTRA admin':ME.venues[S.vi]?.roleName||ROLE_NAME[VENUES[S.vi].role]||'')}</span></div><button class="btn ghost sm" data-a="signout">Sign out</button>`;
-const MORE=['events','marketing','community','reports','page','editor','setup','admin'];
+const MORE=['events','marketing','community','messages','reports','page','editor','setup','admin'];
 function shell(){
   const VV=VENUES[S.vi],navs=NAV.filter(n=>CAN(n[2]));ROLE=navs.length>5?'manager':'staff';
   if(!navs.length){$('#rail').innerHTML=`${LOGO}<div class="sp"></div>${whoBox()}`;$('#tabs').innerHTML='';$('#mbar').innerHTML=LOGO;return}
   if(!navs.find(n=>n[0]===VIEW))VIEW=navs[0][0];
-  const btn=([k,l])=>`<button class="nav ${VIEW===k?'on':''}" data-a="go" data-v="${k}" ${VIEW===k?'aria-current="page"':''}>${ic(k)}<span>${l}</span>${k==='bookings'&&reqCount()?`<span class="ct">${reqCount()}</span>`:''}</button>`;
+  const btn=([k,l])=>`<button class="nav ${VIEW===k?'on':''}" data-a="go" data-v="${k}" ${VIEW===k?'aria-current="page"':''}>${ic(k)}<span>${l}</span>${k==='bookings'&&reqCount()?`<span class="ct">${reqCount()}</span>`:''}${k==='messages'&&msgUnread()?`<span class="ct">${msgUnread()}</span>`:''}</button>`;
   $('#rail').innerHTML=`${LOGO}<button class="venue" data-a="venue" title="Switch venue"><b>${esc(VV.name)}</b><span>${esc(VV.where)} · switch</span></button>${navs.map((n,i)=>(ROLE==='manager'&&(i===0||navs[i-1][3]!==n[3])?`<div class="ngrp">${n[3]}</div>`:'')+btn(n)).join('')}<div class="sp"></div>${whoBox()}`;
   $('#mbar').innerHTML=`${LOGO}<button class="venue" data-a="venue"><b>${esc(VV.name)}</b><span>▾</span></button>`;
   const tabs=navs.filter(n=>!MORE.includes(n[0])||ROLE!=='manager');
@@ -566,7 +566,7 @@ function vSetup(){
 }
 
 /* ---------- render ---------- */
-function render(){if(!GUEST&&S&&ME&&!NAV.some(n=>CAN(n[2]))){shell();$('#main').innerHTML='<div class="loading">Your role has no screens at this venue yet. Ask your manager to give it some.</div>';return}if(GUEST){const g=document.querySelector('#guest .gscroll'),st=g?.scrollTop;$('#guest').innerHTML=guestView();const g2=document.querySelector('#guest .gscroll');if(st&&g2)g2.scrollTop=st;return}if(!S||!ME)return;shell();const VW={floor:vFloor,bookings:vBookings,door:vDoor,orders:vOrders,guests:vGuests,page:vPage,setup:vSetup,editor:vEditor,events:vEvents,marketing:vMarketing,community:vCommunity,reports:vReports,admin:vAdmin}[VIEW];const gs=$('#gscroll')?.scrollTop;$('#main').innerHTML=VW();drawMap();if(gs&&$('#gscroll'))$('#gscroll').scrollTop=gs;if(S.sheet)openSheet(S.sheet,true)}
+function render(){if(!GUEST&&S&&ME&&!NAV.some(n=>CAN(n[2]))){shell();$('#main').innerHTML='<div class="loading">Your role has no screens at this venue yet. Ask your manager to give it some.</div>';return}if(GUEST){const g=document.querySelector('#guest .gscroll'),st=g?.scrollTop;$('#guest').innerHTML=guestView();const g2=document.querySelector('#guest .gscroll');if(st&&g2)g2.scrollTop=st;return}if(!S||!ME)return;shell();const VW={floor:vFloor,bookings:vBookings,door:vDoor,orders:vOrders,guests:vGuests,page:vPage,setup:vSetup,editor:vEditor,events:vEvents,marketing:vMarketing,community:vCommunity,reports:vReports,messages:vMessages,admin:vAdmin}[VIEW];const gs=$('#gscroll')?.scrollTop;$('#main').innerHTML=VW();drawMap();if(gs&&$('#gscroll'))$('#gscroll').scrollTop=gs;if(S.sheet)openSheet(S.sheet,true)}
 
 /* ---------- sheets ---------- */
 function qrSVG(txt){try{const q=qrcode(0,'M');q.addData(txt);q.make();const n=q.getModuleCount();let p='';for(let r=0;r<n;r++)for(let c=0;c<n;c++)if(q.isDark(r,c))p+=`M${c} ${r}h1v1h-1z`;return `<svg viewBox="0 0 ${n} ${n}" shape-rendering="crispEdges"><path d="${p}" fill="#12153f"/></svg>`}catch(e){return `<div style="width:132px;height:132px;display:grid;place-items:center;color:#12153f;font-weight:800;line-height:1.2">${esc(txt)}</div>`}}
@@ -760,7 +760,7 @@ Object.assign(ICON,{
 events:'<path d="M3 6h18v3.5a2.5 2.5 0 0 0 0 5V18H3v-3.5a2.5 2.5 0 0 0 0-5z"/><path d="M14.5 6.5v11" stroke-dasharray="1.5 2.5"/>',
 marketing:'<path d="M4 10v4h3l8 4.5v-13L7 10z"/><path d="M18.5 9a4 4 0 0 1 0 6"/>',
 community:'<path d="M12 3.5l2.5 5.1 5.6.8-4 4 .9 5.6-5-2.7-5 2.7.9-5.6-4-4 5.6-.8z"/>',
-reports:'<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'});
+reports:'<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',messages:'<path d="M21 12a8.5 8.5 0 0 1-12.4 7.6L3 21l1.4-5.4A8.5 8.5 0 1 1 21 12z"/>'});
 const tiers=()=>CFG().tiers;
 const tierOf=g=>[...tiers()].reverse().find(t=>g.spend>=t.min)||tiers()[0];
 const points=g=>g.pts??0;
@@ -1158,7 +1158,7 @@ async function bootGuest(path){
 
 /* ================= XTRA admin: venues, features, roles, accounts ================= */
 const FEAT_INFO=[['reservations','Reservations','Booking page, bookings, door check-in'],['ordering','Ordering and bills','Orders by table, bills with minimum spend'],['ticketing','Tickets and events','Ticket pages, seat maps, promo codes'],['marketing','Marketing','WhatsApp and email campaigns, automatic messages'],['guests','Guest list','Guest profiles, notes and tags'],['community','Community','Member tiers, points and perks']];
-const PERM_INFO=[['floor','Floor','Tonight\'s map and tables'],['bookings','Bookings','Accept, decline and add bookings'],['door','Door','Scan passes and tickets, check guests in'],['orders','Orders and bills','Take orders, close bills'],['events','Events','Events, ticket prices, promo codes'],['marketing','Marketing','Send campaigns'],['guests','Guests','Guest list, notes and tags'],['community','Community','Tiers and points'],['editor','Floor map','Draw and change the floor map'],['setup','Venue setup','Slots, areas, booking page, logo'],['staff','Staff and roles','Add staff, make roles'],['reports','Reports','Money, bookings, no-shows, top guests']];
+const PERM_INFO=[['floor','Floor','Tonight\'s map and tables'],['bookings','Bookings','Accept, decline and add bookings'],['door','Door','Scan passes and tickets, check guests in'],['orders','Orders and bills','Take orders, close bills'],['events','Events','Events, ticket prices, promo codes'],['marketing','Marketing','Send campaigns'],['guests','Guests','Guest list, notes and tags'],['community','Community','Tiers and points'],['editor','Floor map','Draw and change the floor map'],['setup','Venue setup','Slots, areas, booking page, logo'],['staff','Staff and roles','Add staff, make roles'],['reports','Reports','Money, bookings, no-shows, top guests'],['messages','Messages','WhatsApp chats with guests, message history']];
 const PERM_FEAT={bookings:'reservations',door:'reservations',orders:'ordering',events:'ticketing',marketing:'marketing',guests:'guests',community:'community'};
 const BUILTIN=[['owner','Owner'],['manager','Manager'],['door','Door'],['waiter','Waiter']];
 /** Options for a role picker: built-in roles, then the venue's own roles (value "r:<id>"). */
@@ -1290,3 +1290,59 @@ function vReports(){const r=repLoad(),seg=`<div class="seg">${[['7','7 days'],['
   ${showT?`<div class="bigbox" style="margin-top:16px"><h3>Events</h3>${r.events.length?`<div class="scroll"><table class="gtable"><thead><tr><th>Event</th><th>Sold</th><th class="hide">Came</th><th>After promos</th></tr></thead><tbody>${r.events.map(e=>`<tr><td><b>${esc(e.title)}</b><div class="mute" style="font-size:13px">${esc(dparts(e.day).slice(0,3).join(' '))}</div></td><td class="num">${e.sold}${e.capacity?` of ${e.capacity} <span class="mute">(${rpct(e.sold,e.capacity)}%)</span>`:''}</td><td class="hide num">${e.checkedIn}</td><td class="num">${P2(e.net)}</td></tr>`).join('')}</tbody></table></div><p class="mute" style="font-size:13px;margin:10px 0 0">Booking fees paid by guests: ${P2(M.bookingFees)}. Promo discounts given: ${P2(M.ticketDiscounts)}.</p>`:'<div class="empty">No events in these dates.</div>'}</div>`:''}`;
 }
 Object.assign(ACT,{reprange:v=>{REP.range=v;render()},repcsv:()=>{const [f,t]=repRange(REP.range),r=REP.data[VENUES[S.vi].id+f+t];if(r)repCsv(r)}});
+
+/* ================= messages and WhatsApp inbox ================= */
+const MSG={tab:'chats',convos:null,sel:null,thread:null,draft:{},log:null,f:{q:'',status:'',channel:''},busy:false,sending:false,vid:null};
+const KIND={booking_received:'Booking request',booking_accepted:'Booking accepted',deposit_paid:'Deposit receipt',booking_declined:'Booking declined',booking_cancelled:'Booking cancelled',booking_pass:'Guest pass',booking_reminder:'Reminder',ticket:'Ticket',ticket_order:'Ticket order',otp:'Login code',campaign:'Campaign',reply:'Reply',inbound:'Guest message',test:'Test',visit_thanks:'Thank you',birthday:'Birthday',winback:'We miss you'};
+const kindName=(k='')=>KIND[k]||(k.startsWith('auto:remind')?'Reminder':k.startsWith('auto:thanks')?'Thank you':k.startsWith('auto:bday')?'Birthday':k.startsWith('auto:winback')?'We miss you':k.replace(/_/g,' '));
+const tzTime=d=>new Date(d).toLocaleTimeString('en-GB',{timeZone:TZ,hour:'numeric',minute:'2-digit',hour12:true});
+const tzDay=d=>new Date(d).toLocaleDateString('en-GB',{timeZone:TZ,day:'numeric',month:'short'});
+const when=d=>{const t=new Date(d),now=new Date();return t.toDateString()===now.toDateString()?tzTime(d):`${tzDay(d)}, ${tzTime(d)}`};
+const msgUnread=()=>(MSG.convos||[]).reduce((s,c)=>s+c.unread,0);
+function msgReset(){const id=VENUES[S.vi].id;if(MSG.vid!==id){Object.assign(MSG,{convos:null,sel:null,thread:null,log:null,vid:id})}}
+function msgLoad(force){msgReset();if(MSG.busy)return;if(!force&&(MSG.tab==='chats'?MSG.convos:MSG.log))return;MSG.busy=true;
+  const f=MSG.f,q=new URLSearchParams(Object.entries({q:f.q,status:f.status,channel:f.channel}).filter(([,v])=>v)).toString();
+  const jobs=[GET(vurl('/inbox')).then(r=>{MSG.convos=r})];
+  if(MSG.tab==='log')jobs.push(GET(vurl('/messages'+(q?'?'+q:''))).then(r=>{MSG.log=r}));
+  if(MSG.tab==='chats'&&MSG.sel)jobs.push(GET(vurl('/inbox/'+encodeURIComponent(MSG.sel))).then(r=>{MSG.thread=r}));
+  Promise.all(jobs).then(()=>{const c=MSG.sel&&MSG.convos?.find(x=>x.phone===MSG.sel);if(c&&MSG.tab==='chats')c.unread=0});
+  Promise.all(jobs).catch(e=>toast(e.message)).finally(()=>{MSG.busy=false;if(VIEW==='messages'&&!S.sheet)msgPaint()})}
+/** Re-render but keep the composer text, focus and the chat scrolled to the newest message. */
+function msgPaint(){const ta=$('#mcompose'),had=document.activeElement===ta,pos=ta?.selectionStart,box=$('#mthread'),atEnd=!box||box.scrollHeight-box.scrollTop-box.clientHeight<40;render();
+  const t=$('#mcompose');if(t&&had){t.focus();try{t.setSelectionRange(pos,pos)}catch(_){}}const b=$('#mthread');if(b&&atEnd)b.scrollTop=b.scrollHeight}
+const tick=m=>m.direction==='in'?'':m.status==='failed'?`<span class="tk bad" title="${esc(m.error||'Failed')}">Failed</span>`:m.status==='read'?'<span class="tk read" title="Read">✓✓</span>':m.status==='delivered'?'<span class="tk" title="Delivered">✓✓</span>':m.status==='sent'?'<span class="tk" title="Sent">✓</span>':'<span class="tk" title="Saved, not sent (test mode)">•</span>';
+function vChats(){const C=MSG.convos;if(!C)return '<div class="loading">Loading…</div>';
+  if(!C.length)return `<div class="bigbox"><div class="empty"><b>No chats yet.</b><br>When a guest replies to a booking or ticket message on WhatsApp, the chat shows up here and you can answer it.</div></div>`;
+  const list=`<div class="chatlist">${C.map(c=>`<button class="chatrow ${MSG.sel===c.phone?'on':''}" data-a="mchat" data-v="${esc(c.phone)}"><span class="av">${esc((c.name||'#').trim()[0].toUpperCase())}</span><span class="cx"><span class="cn"><b>${esc(c.name||c.phone)}</b><time>${esc(when(c.lastAt))}</time></span><span class="cl">${c.lastFromGuest?'':'<span class="mute">You: </span>'}${esc((c.lastBody||'').slice(0,90))}</span></span>${c.unread?`<span class="ct">${c.unread}</span>`:''}</button>`).join('')}</div>`;
+  const T=MSG.thread&&MSG.thread.phone===MSG.sel?MSG.thread:null;
+  const pane=!MSG.sel?`<div class="chatpane empty-pane"><div class="mute">Pick a chat to read it and reply.</div></div>`:!T?`<div class="chatpane"><div class="loading">Loading…</div></div>`:
+   `<div class="chatpane"><div class="chathead"><button class="btn ghost sm back" data-a="mback" aria-label="Back to chats">←</button><div><b>${esc(T.guest?.name||C.find(c=>c.phone===T.phone)?.name||T.phone)}</b><div class="mute" style="font-size:13px">${esc(T.phone)}${T.guest&&S.guests?.some(x=>x.id===T.guest.id)?` · <a href="#" data-a="guest" data-v="${T.guest.id}">Guest profile</a>`:''}</div></div>
+     <span class="win ${T.open?'open':''}">${T.open?`Open · ${Math.max(1,Math.round((new Date(T.closesAt)-Date.now())/36e5))} h left`:'Closed'}</span></div>
+    <div class="thread" id="mthread">${T.messages.map((m,i,a)=>{const day=tzDay(m.createdAt),prev=i?tzDay(a[i-1].createdAt):'';return `${day!==prev?`<div class="dayline"><span>${esc(day)}</span></div>`:''}<div class="bub ${m.direction==='in'?'in':'out'}${m.status==='failed'?' fail':''}">${m.direction==='out'&&m.kind!=='reply'?`<div class="bk">${esc(kindName(m.kind))}</div>`:''}<div class="bt">${esc(m.body)}</div><div class="bm">${esc(tzTime(m.createdAt))} ${tick(m)}</div></div>`}).join('')}</div>
+    ${T.open?`<form class="composer" data-f="mreply"><textarea id="mcompose" rows="1" placeholder="Write a reply" maxlength="4000">${esc(MSG.draft[T.phone]||'')}</textarea><button class="btn" ${MSG.sending?'disabled':''}>${MSG.sending?'Sending…':'Send'}</button></form>`
+     :`<div class="closednote">WhatsApp lets you reply for 24 hours after the guest's last message. This chat opens again when they write to you.</div>`}</div>`;
+  return `<div class="inbox ${MSG.sel?'has-sel':''}">${list}${pane}</div>`}
+function vMsgLog(){const L=MSG.log,f=MSG.f;
+  const bar=`<div class="mfilters"><input id="msearch" type="search" placeholder="Search name, number, email or text" value="${esc(f.q)}" aria-label="Search messages"><div class="seg">${[['','All'],['failed','Failed'],['in','From guests']].map(([k,l])=>`<button class="${f.status===k?'on':''}" data-a="mstatus" data-v="${k}">${l}</button>`).join('')}</div><select id="mchannel" aria-label="Channel"><option value="">WhatsApp and email</option><option value="whatsapp" ${f.channel==='whatsapp'?'selected':''}>WhatsApp</option><option value="email" ${f.channel==='email'?'selected':''}>Email</option></select></div>`;
+  if(!L)return bar+'<div class="loading">Loading…</div>';
+  const pill=m=>m.direction==='in'?'<span class="pill in">Received</span>':`<span class="pill ${m.status}">${{logged:'Test mode',sent:'Sent',delivered:'Delivered',read:'Read',failed:'Failed'}[m.status]||esc(m.status)}</span>`;
+  return bar+`<div class="bigbox">${L.length?`<div class="scroll"><table class="gtable mlog"><thead><tr><th>When</th><th>To</th><th>Message</th><th>Status</th><th></th></tr></thead><tbody>${L.map(m=>`<tr><td class="num nowrap">${esc(when(m.createdAt))}</td><td><b>${esc(m.guest||m.to)}</b><div class="mute" style="font-size:13px">${m.channel==='email'?'Email':'WhatsApp'}${m.guest?` · ${esc(m.to)}`:''}</div></td><td><b>${esc(kindName(m.kind))}</b><div class="mute snip">${esc(m.subject&&m.channel==='email'?m.subject:m.body.split('\n')[0]).slice(0,120)}</div>${m.error?`<div class="err">${esc(m.error.slice(0,200))}</div>`:''}</td><td>${pill(m)}</td><td>${m.direction==='out'&&m.status==='failed'?`<button class="btn ghost sm" data-a="mresend" data-v="${m.id}">Send again</button>`:m.direction==='in'?`<button class="btn ghost sm" data-a="mopen" data-v="${esc(m.to)}">Open chat</button>`:''}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">No messages match.</div>'}</div>`}
+function vMessages(){msgLoad();const n=msgUnread(),seg=`<div class="seg"><button class="${MSG.tab==='chats'?'on':''}" data-a="mtab" data-v="chats">WhatsApp chats${n?` <span class="ct">${n}</span>`:''}</button><button class="${MSG.tab==='log'?'on':''}" data-a="mtab" data-v="log">All messages</button></div>`;
+  return head('Messages','Guest replies on WhatsApp, and every message and email sent',seg)+(MSG.tab==='chats'?vChats():vMsgLog())}
+Object.assign(ACT,{
+  mtab:v=>{MSG.tab=v;msgLoad(true);render()},
+  mchat:v=>{MSG.sel=v;MSG.thread=null;render();msgLoad(true)},
+  mopen:v=>{MSG.tab='chats';MSG.sel=v;MSG.thread=null;render();msgLoad(true)},
+  mback:()=>{MSG.sel=null;render()},
+  mstatus:v=>{MSG.f.status=v;MSG.log=null;render();msgLoad(true)},
+  mresend:async(v,b)=>{b.disabled=true;try{const r=await POST(vurl(`/messages/${v}/resend`));toast(r.status==='failed'?`Still failing: ${r.error||''}`.slice(0,140):'Sent again')}catch(e){toast(e.message)}msgLoad(true)},
+});
+document.addEventListener('input',e=>{const el=e.target;if(!S||VIEW!=='messages')return;
+  if(el.id==='mcompose'&&MSG.sel){MSG.draft[MSG.sel]=el.value;el.style.height='auto';el.style.height=Math.min(el.scrollHeight,160)+'px'}
+  if(el.id==='msearch'){MSG.f.q=el.value;later('msearch',()=>{MSG.log=null;msgLoad(true)})}});
+document.addEventListener('change',e=>{if(!S||VIEW!=='messages')return;if(e.target.id==='mchannel'){MSG.f.channel=e.target.value;MSG.log=null;render();msgLoad(true)}});
+document.addEventListener('keydown',e=>{if(e.target.id==='mcompose'&&e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();e.target.form?.requestSubmit()}});
+document.addEventListener('submit',async e=>{const f=e.target;if(!S||f.dataset.f!=='mreply')return;e.preventDefault();const phone=MSG.sel,text=(MSG.draft[phone]||'').trim();if(!text||MSG.sending)return;
+  MSG.sending=true;msgPaint();try{const m=await POST(vurl('/inbox/'+encodeURIComponent(phone)),{text});MSG.draft[phone]='';if(MSG.thread?.phone===phone)MSG.thread.messages.push(m);if(m.status==='failed')toast(`Not sent: ${m.error||''}`.slice(0,160))}catch(err){toast(err.message)}MSG.sending=false;msgPaint();msgLoad(true)});
+// New guest replies: check often while Messages is open, and now and then elsewhere for the badge.
+setInterval(()=>{if(!S||!ME||!CAN('messages')||document.visibilityState!=='visible')return;if(VIEW==='messages')msgLoad(true);else{msgReset();GET(vurl('/inbox')).then(r=>{const before=msgUnread();MSG.convos=r;if(msgUnread()!==before&&!S.sheet&&!document.activeElement?.matches('input,textarea,select'))render()}).catch(()=>{})}},8000);

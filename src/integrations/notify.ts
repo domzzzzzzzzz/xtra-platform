@@ -1,11 +1,23 @@
 /**
- * Outgoing WhatsApp + email. Every message is written to the messages table.
+ * Outgoing WhatsApp + email. Every message is written to the messages table,
+ * with what is needed to send it again (template, HTML, sender).
  * With no provider keys set, messages are only logged (status "logged"), so
  * the system works end to end in development.
  */
-import { db, schema } from '../db/index.js';
+import { eq } from 'drizzle-orm';
 import nodemailer, { type Transporter } from 'nodemailer';
+import { db, schema } from '../db/index.js';
+import type { MessagePayload } from '../db/schema.js';
 import { config } from '../config.js';
+import { normalizePhone } from '../lib/codes.js';
+import { renderEmail, renderText, type EmailDoc } from './email-html.js';
+
+/**
+ * A Meta-approved WhatsApp template. `header` fills the header's {{1}} (the
+ * venue name), `params` the body, and `button` the {{1}} at the end of the
+ * URL button (the path after the app URL, e.g. "b/AB12CD").
+ */
+export type WaTemplate = { name: string; params: string[]; button?: string; header?: string; language?: string };
 
 export type Outgoing = {
   channel: 'whatsapp' | 'email';
@@ -18,36 +30,39 @@ export type Outgoing = {
   campaignId?: string | null;
   /** Meta-approved template. Needed for WhatsApp outside the 24h window. */
   whatsappTemplate?: WaTemplate | null;
+  /** Email only. */
+  html?: string;
+  fromName?: string;
+  replyTo?: string | null;
+  sentBy?: string | null;
 };
-
-/**
- * A Meta-approved WhatsApp template. `button` fills the {{1}} at the end of the
- * template's URL button (the path after the app URL, e.g. "b/AB12CD").
- */
-export type WaTemplate = { name: string; params: string[]; button?: string; language?: string };
 
 /** Path for a template's URL button: the link with the app URL taken off. */
 export const waPath = (url: string) => url.replace(`${config.publicAppUrl}/`, '');
 
+export const whatsappReady = () => Boolean(config.whatsapp.token && config.whatsapp.phoneNumberId);
+export const smtpReady = () => Boolean(config.smtp.host && config.smtp.user && config.smtp.password);
+export const emailReady = () => smtpReady() || Boolean(config.email.resendKey);
+
+/** Meta wants the full international number without "+" (01xxxxxxxxx becomes 201xxxxxxxxx). */
+const waNumber = (to: string) => normalizePhone(to).slice(1);
+
+function templatePayload(t: WaTemplate) {
+  const lang = { code: t.language ?? config.whatsapp.language };
+  const text = (v: string) => ({ type: 'text', text: v.trim() || '-' });
+  const components = [
+    ...(t.header != null ? [{ type: 'header', parameters: [text(t.header)] }] : []),
+    ...(t.params.length ? [{ type: 'body', parameters: t.params.map(text) }] : []),
+    ...(t.button != null ? [{ type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: t.button }] }] : []),
+  ];
+  return components.length ? { name: t.name, language: lang, components } : { name: t.name, language: lang };
+}
+
 async function sendWhatsApp(m: Outgoing): Promise<{ status: string; providerId?: string }> {
   if (!config.whatsapp.token) return { status: 'logged' };
-  const to = m.to.replace(/^\+/, '');
+  const to = waNumber(m.to);
   const payload = m.whatsappTemplate
-    ? {
-        messaging_product: 'whatsapp', to, type: 'template',
-        template: m.whatsappTemplate.params.length === 0 && m.whatsappTemplate.button == null
-          ? { name: m.whatsappTemplate.name, language: { code: m.whatsappTemplate.language ?? config.whatsapp.language } }
-          : {
-          name: m.whatsappTemplate.name,
-          language: { code: m.whatsappTemplate.language ?? config.whatsapp.language },
-          components: [
-            { type: 'body', parameters: m.whatsappTemplate.params.map((text) => ({ type: 'text', text: text.trim() || '-' })) },
-            ...(m.whatsappTemplate.button != null
-              ? [{ type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: m.whatsappTemplate.button }] }]
-              : []),
-          ],
-        },
-      }
+    ? { messaging_product: 'whatsapp', to, type: 'template', template: templatePayload(m.whatsappTemplate) }
     : { messaging_product: 'whatsapp', to, type: 'text', text: { body: m.body, preview_url: true } };
   const res = await fetch(`https://graph.facebook.com/v21.0/${config.whatsapp.phoneNumberId}/messages`, {
     method: 'POST',
@@ -59,11 +74,13 @@ async function sendWhatsApp(m: Outgoing): Promise<{ status: string; providerId?:
   return { status: 'sent', providerId: data.messages?.[0]?.id };
 }
 
-export const smtpReady = () => Boolean(config.smtp.host && config.smtp.user && config.smtp.password);
-export const emailReady = () => smtpReady() || Boolean(config.email.resendKey);
-
-/** "no-reply@x.com" becomes "XTRA <no-reply@x.com>"; a value with a name is kept. */
-const fromHeader = (v: string) => (v.includes('<') ? v : `XTRA <${v}>`);
+/** "no-reply@x.com" becomes "<name> <no-reply@x.com>"; a value that has a name keeps it unless a name is given. */
+const fromHeader = (v: string, name?: string) => {
+  const addr = /<([^>]+)>/.exec(v)?.[1] ?? v.trim();
+  const own = /^(.*?)\s*</.exec(v)?.[1]?.replace(/"/g, '').trim();
+  const n = (name ?? own ?? 'XTRA').replace(/["<>]/g, '');
+  return `"${n}" <${addr}>`;
+};
 
 let smtp: Transporter | null = null;
 const smtpTransport = () => smtp ??= nodemailer.createTransport({
@@ -74,9 +91,11 @@ const smtpTransport = () => smtp ??= nodemailer.createTransport({
 });
 
 async function sendEmail(m: Outgoing): Promise<{ status: string; providerId?: string }> {
+  const subject = m.subject ?? 'XTRA';
+  const replyTo = m.replyTo || undefined;
   if (smtpReady()) {
     const info = await smtpTransport().sendMail({
-      from: fromHeader(config.smtp.from || config.smtp.user), to: m.to, subject: m.subject ?? 'XTRA', text: m.body,
+      from: fromHeader(config.smtp.from || config.smtp.user, m.fromName), to: m.to, subject, text: m.body, html: m.html, replyTo,
     });
     return { status: 'sent', providerId: info.messageId };
   }
@@ -84,30 +103,62 @@ async function sendEmail(m: Outgoing): Promise<{ status: string; providerId?: st
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { Authorization: `Bearer ${config.email.resendKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from: config.email.from, to: [m.to], subject: m.subject ?? 'XTRA', text: m.body }),
+    body: JSON.stringify({ from: fromHeader(config.email.from, m.fromName), to: [m.to], subject, text: m.body, html: m.html, reply_to: replyTo }),
   });
   if (!res.ok) throw new Error(`Email ${res.status}: ${await res.text()}`);
   const data = (await res.json()) as { id?: string };
   return { status: 'sent', providerId: data.id };
 }
 
-export async function send(m: Outgoing): Promise<boolean> {
-  let status = 'failed';
-  let providerId: string | undefined;
-  let error: string | undefined;
+async function deliver(m: Outgoing) {
   try {
-    const r = m.channel === 'whatsapp' ? await sendWhatsApp(m) : await sendEmail(m);
-    status = r.status;
-    providerId = r.providerId;
+    return { ...(m.channel === 'whatsapp' ? await sendWhatsApp(m) : await sendEmail(m)), error: undefined };
   } catch (e) {
-    error = (e as Error).message;
+    return { status: 'failed', providerId: undefined, error: (e as Error).message };
   }
-  await db.insert(schema.messages).values({
+}
+
+/** Sends one message and records it. Returns the message row. */
+export async function sendMessage(m: Outgoing) {
+  if (m.channel === 'whatsapp') m = { ...m, to: normalizePhone(m.to) };
+  const r = await deliver(m);
+  const payload: MessagePayload = { whatsappTemplate: m.whatsappTemplate ?? null, html: m.html, fromName: m.fromName, replyTo: m.replyTo ?? undefined };
+  const [row] = await db.insert(schema.messages).values({
     venueId: m.venueId ?? null, guestId: m.guestId ?? null, campaignId: m.campaignId ?? null,
     channel: m.channel, to: m.to, kind: m.kind, subject: m.subject ?? null, body: m.body,
-    status, providerId: providerId ?? null, error: error ?? null,
+    status: r.status, providerId: r.providerId ?? null, error: r.error ?? null, payload, sentBy: m.sentBy ?? null,
+  }).returning();
+  return row;
+}
+
+export async function send(m: Outgoing): Promise<boolean> {
+  return (await sendMessage(m)).status !== 'failed';
+}
+
+/** Sends a recorded outgoing message again, as a new message. */
+export async function resend(id: string) {
+  const [old] = await db.select().from(schema.messages).where(eq(schema.messages.id, id));
+  if (!old || old.direction !== 'out') return null;
+  const p = old.payload ?? {};
+  return sendMessage({
+    channel: old.channel, to: old.to, kind: old.kind, subject: old.subject ?? undefined, body: old.body,
+    venueId: old.venueId, guestId: old.guestId, campaignId: old.campaignId,
+    whatsappTemplate: p.whatsappTemplate ?? null, html: p.html, fromName: p.fromName, replyTo: p.replyTo,
   });
-  return status !== 'failed';
+}
+
+export type VenueLike = {
+  id: string; name: string; logoUrl?: string | null; address?: string | null; mapUrl?: string | null;
+  phone?: string | null; email?: string | null; settings?: { color?: string } | null;
+};
+
+/** The venue's look and contact details for an email. */
+export const emailVenue = (v: VenueLike) => ({ name: v.name, logoUrl: v.logoUrl, address: v.address, mapUrl: v.mapUrl, phone: v.phone, color: v.settings?.color });
+
+/** Email fields from a venue and a document: HTML, text, sender name and reply-to. */
+export function emailParts(v: VenueLike, doc: Omit<EmailDoc, 'venue'>) {
+  const d = { ...doc, venue: emailVenue(v) };
+  return { html: renderEmail(d), body: renderText(d), fromName: `${v.name} via XTRA`, replyTo: v.email ?? null };
 }
 
 /** Send on the venue's chosen channel(s). Skips a channel the guest has no address for. */
@@ -117,18 +168,22 @@ export async function notifyGuest(opts: {
   email?: string | null;
   kind: string;
   subject: string;
+  /** WhatsApp text, used when no template is given (and as the log line). */
   body: string;
   venueId?: string;
   guestId?: string;
   /** The approved template for WhatsApp. Business-started chats must use one. */
   wa?: WaTemplate;
+  /** The branded email. Without it the email is plain text from `body`. */
+  mail?: { venue: VenueLike; doc: Omit<EmailDoc, 'venue'> };
 }) {
   const jobs: Promise<boolean>[] = [];
   if ((opts.channel === 'whatsapp' || opts.channel === 'both') && opts.phone) {
     jobs.push(send({ channel: 'whatsapp', to: opts.phone, kind: opts.kind, body: opts.body, venueId: opts.venueId, guestId: opts.guestId, whatsappTemplate: opts.wa ?? null }));
   }
   if ((opts.channel === 'email' || opts.channel === 'both') && opts.email) {
-    jobs.push(send({ channel: 'email', to: opts.email, kind: opts.kind, subject: opts.subject, body: opts.body, venueId: opts.venueId, guestId: opts.guestId }));
+    const parts = opts.mail ? emailParts(opts.mail.venue, opts.mail.doc) : { body: opts.body };
+    jobs.push(send({ channel: 'email', to: opts.email, kind: opts.kind, subject: opts.subject, venueId: opts.venueId, guestId: opts.guestId, ...parts }));
   }
   await Promise.all(jobs);
 }

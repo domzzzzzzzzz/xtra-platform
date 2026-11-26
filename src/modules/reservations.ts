@@ -6,7 +6,8 @@ import { parse, venueAccess, MANAGERS, DOOR, FLOOR, egp } from '../lib/http.js';
 import { badRequest, conflict, notFound } from '../lib/errors.js';
 import { qrToken, shortCode } from '../lib/codes.js';
 import { nightOf, prettyDate, weekdayOf } from '../lib/dates.js';
-import { notifyGuest, waPath } from '../integrations/notify.js';
+import { notifyGuest } from '../integrations/notify.js';
+import * as M from './guest-messages.js';
 import { config } from '../config.js';
 import { upsertGuest, ensureVenueGuest, recordSpend } from './guests-service.js';
 
@@ -37,6 +38,10 @@ export const bookingInput = z.object({
   guests: z.array(person).max(30).default([]),
   note: z.string().max(500).default(''),
 });
+
+/** Sends one catalogue message on the venue's channel(s). */
+const tell = (venue: Venue, to: { phone?: string | null; email?: string | null; guestId?: string | null }, m: M.GuestMessage) =>
+  notifyGuest({ channel: venue.notifyChannel, phone: to.phone, email: to.email, venueId: venue.id, guestId: to.guestId ?? undefined, ...m });
 
 export const statusUrl = (code: string) => `${config.publicAppUrl}/b/${code}`;
 
@@ -114,12 +119,7 @@ export async function createBooking(venue: Venue, input: z.infer<typeof bookingI
     }
     return { reservation: res, guest };
   }).then(async (r) => {
-    await notifyGuest({
-      channel: venue.notifyChannel, phone: r.guest.phone, email: r.guest.email, venueId: venue.id, guestId: r.guest.id,
-      kind: 'booking_received', subject: `${venue.name}: booking received`,
-      body: `Hi ${r.guest.firstName}, we got your booking at ${venue.name} for ${prettyDate(input.date)}, ${r.reservation.slotLabel}, ${partySize} people. It is in review. We will message you as soon as it is accepted. Track it: ${statusUrl(r.reservation.code)}`,
-      wa: { name: 'xtra_booking_received', params: [r.guest.firstName, venue.name, prettyDate(input.date), r.reservation.slotLabel], button: waPath(statusUrl(r.reservation.code)) },
-    });
+    await tell(venue, { phone: r.guest.phone, email: r.guest.email, guestId: r.guest.id }, M.bookingReceived(venue, r.guest, r.reservation));
     return r.reservation;
   });
 }
@@ -145,12 +145,7 @@ export async function sendPasses(r: Reservation, venue: Venue) {
   const party = await db.select().from(schema.reservationGuests).where(eq(schema.reservationGuests.reservationId, r.id));
   for (const p of party) {
     if (!p.phone && !p.email) continue;
-    await notifyGuest({
-      channel: venue.notifyChannel, phone: p.phone, email: p.email, venueId: venue.id, guestId: p.guestId ?? undefined,
-      kind: 'booking_pass', subject: `${venue.name}: your pass for ${prettyDate(r.date)}`,
-      body: `${p.name}, you are on the list at ${venue.name}, ${prettyDate(r.date)}, ${r.slotLabel}. Show this QR at the door: ${config.publicAppUrl}/p/${p.qrToken}`,
-      wa: { name: 'xtra_booking_pass', params: [p.name, venue.name, `${prettyDate(r.date)}, ${r.slotLabel}`], button: `p/${p.qrToken}` },
-    });
+    await tell(venue, p, M.bookingPass(venue, p, r));
   }
 }
 
@@ -179,23 +174,16 @@ export async function acceptReservation(venue: Venue, r: Reservation, o: { table
 
 export async function sendAccepted(venue: Venue, u: Reservation) {
   const g = await bookerOf(u);
-  await notifyGuest({
-    channel: venue.notifyChannel, phone: g.phone, email: g.email, venueId: venue.id, guestId: g.id,
-    kind: 'booking_accepted', subject: `${venue.name}: booking accepted`,
-    body: u.depositAmount > 0 && !u.depositPaidAt
-      ? `Good news ${g.firstName}, ${venue.name} accepted your booking for ${prettyDate(u.date)}. Pay the ${egp(u.depositAmount)} deposit to confirm it (it comes off your bill): ${statusUrl(u.code)}`
-      : `Good news ${g.firstName}, ${venue.name} accepted your booking for ${prettyDate(u.date)}, ${u.slotLabel}. See you there: ${statusUrl(u.code)}`,
-    wa: u.depositAmount > 0 && !u.depositPaidAt
-      ? { name: 'xtra_booking_deposit', params: [g.firstName, venue.name, prettyDate(u.date), egp(u.depositAmount)], button: waPath(statusUrl(u.code)) }
-      : { name: 'xtra_booking_accepted', params: [g.firstName, venue.name, prettyDate(u.date), u.slotLabel], button: waPath(statusUrl(u.code)) },
-  });
+  await tell(venue, { ...g, guestId: g.id }, M.bookingAccepted(venue, g, u));
 }
 
 export async function onDepositPaid(reservationId: string) {
   const [r] = await db.update(schema.reservations).set({ status: 'confirmed', depositPaidAt: new Date() })
     .where(and(eq(schema.reservations.id, reservationId), eq(schema.reservations.status, 'accepted'))).returning();
   if (!r) return;
-  await sendPasses(r, await venueOf(r.venueId));
+  const venue = await venueOf(r.venueId), g = await bookerOf(r);
+  await tell(venue, { ...g, guestId: g.id }, M.depositPaid(venue, g, r));
+  await sendPasses(r, venue);
 }
 
 export default async function reservations(app: FastifyInstance) {
@@ -323,12 +311,7 @@ export default async function reservations(app: FastifyInstance) {
       .where(and(eq(schema.reservations.id, req.params.id), eq(schema.reservations.venueId, venue.id), eq(schema.reservations.status, 'in_review'))).returning();
     if (!u) throw conflict('This booking was already handled', 'already_decided');
     const g = await bookerOf(u);
-    await notifyGuest({
-      channel: venue.notifyChannel, phone: g.phone, email: g.email, venueId: venue.id, guestId: g.id,
-      kind: 'booking_declined', subject: `${venue.name}: booking update`,
-      body: `Hi ${g.firstName}, sorry, ${venue.name} cannot take your booking for ${prettyDate(u.date)}.${b.reason ? ` ${b.reason}` : ''}`,
-      wa: { name: 'xtra_booking_declined', params: [g.firstName, venue.name, prettyDate(u.date)], button: `book/${venue.slug}` },
-    });
+    await tell(venue, { ...g, guestId: g.id }, M.bookingDeclined(venue, g, u, b.reason));
     return u;
   });
 
@@ -347,6 +330,10 @@ export default async function reservations(app: FastifyInstance) {
       const r = await loadRes(req.params.venueId, req.params.id);
       if (['declined', 'cancelled', 'completed', 'no_show'].includes(r.status)) throw conflict('This booking is already closed');
       const [u] = await db.update(schema.reservations).set({ status }).where(eq(schema.reservations.id, r.id)).returning();
+      if (status === 'cancelled') {
+        const venue = await venueOf(r.venueId), g = await bookerOf(u);
+        await tell(venue, { ...g, guestId: g.id }, M.bookingCancelled(venue, g, u));
+      }
       return u;
     });
   }

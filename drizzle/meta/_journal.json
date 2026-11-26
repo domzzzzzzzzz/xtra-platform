@@ -29,6 +29,13 @@
       "when": 1795716099316,
       "tag": "0003_media_location",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1795726973821,
+      "tag": "0004_messages_inbox",
+      "breakpoints": true
     }
   ]
 }

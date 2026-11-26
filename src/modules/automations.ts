@@ -11,6 +11,7 @@ import { and, eq, gte, inArray, like, sql } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { config } from '../config.js';
 import { notifyGuest } from '../integrations/notify.js';
+import * as M from './guest-messages.js';
 import { localDate, nightOf } from '../lib/dates.js';
 import { MANAGERS, venueAccess } from '../lib/http.js';
 
@@ -58,12 +59,7 @@ export async function runAutomations(now = new Date()) {
         if (await alreadySent(kind)) continue;
         const [p] = await db.select({ t: schema.reservationGuests.qrToken }).from(schema.reservationGuests)
           .where(and(eq(schema.reservationGuests.reservationId, r.id), eq(schema.reservationGuests.isBooker, true)));
-        await notifyGuest({
-          channel: ch, phone: g.phone, email: g.email, kind, venueId: v.id, guestId: g.id,
-          subject: `Tonight at ${v.name}`,
-          body: `Hi ${g.firstName}, see you tonight at ${v.name} at ${r.slotLabel.split(' ')[0]}. Your pass: ${config.publicAppUrl}/p/${p?.t ?? ''}`,
-          wa: { name: 'xtra_booking_reminder', params: [g.firstName, v.name, r.slotLabel.split(' ')[0]], button: `p/${p?.t ?? ''}` },
-        });
+        await notifyGuest({ channel: ch, phone: g.phone, email: g.email, venueId: v.id, guestId: g.id, ...M.bookingReminder(v, g, r, p?.t ?? ''), kind });
         sent++;
       }
     }
@@ -76,12 +72,7 @@ export async function runAutomations(now = new Date()) {
       for (const { r, g } of rows) {
         const kind = `auto:thanks:${r.id}`;
         if (await alreadySent(kind)) continue;
-        await notifyGuest({
-          channel: ch, phone: g.phone, email: g.email, kind, venueId: v.id, guestId: g.id,
-          subject: `Thank you from ${v.name}`,
-          body: `Hi ${g.firstName}, thank you for coming to ${v.name} last night. We hope to see you again soon: ${config.publicAppUrl}/book/${v.slug}`,
-          wa: { name: 'xtra_visit_thanks', params: [g.firstName, v.name], button: `book/${v.slug}` },
-        });
+        await notifyGuest({ channel: ch, phone: g.phone, email: g.emailOptIn ? g.email : null, venueId: v.id, guestId: g.id, ...M.visitThanks(v, g), kind });
         sent++;
       }
     }
@@ -96,9 +87,7 @@ export async function runAutomations(now = new Date()) {
         if (wantBday && g.birthDate && g.birthDate.slice(5) === inWeek) {
           const kind = `auto:bday:${v.id}:${g.id}:${now.getUTCFullYear()}`;
           if (!(await alreadySent(kind))) {
-            await notifyGuest({ channel: 'whatsapp', phone: g.phone, kind, venueId: v.id, guestId: g.id, subject: '',
-              body: `Hi ${g.firstName}, your birthday is coming up. Celebrate it at ${v.name}, book your table: ${config.publicAppUrl}/book/${v.slug}\nReply STOP to opt out`,
-              wa: { name: 'xtra_birthday', params: [g.firstName, v.name], button: `book/${v.slug}` } });
+            await notifyGuest({ channel: 'both', phone: g.phone, email: g.emailOptIn ? g.email : null, venueId: v.id, guestId: g.id, ...M.birthday(v, g), kind });
             sent++;
           }
         }
@@ -107,9 +96,7 @@ export async function runAutomations(now = new Date()) {
           if (days >= 45 && days < 60) {
             const kind = `auto:winback:${v.id}:${g.id}:${localDate(vg.lastVisitAt)}`;
             if (!(await alreadySent(kind))) {
-              await notifyGuest({ channel: 'whatsapp', phone: g.phone, kind, venueId: v.id, guestId: g.id, subject: '',
-                body: `Hi ${g.firstName}, we miss you at ${v.name}. Come back this week: ${config.publicAppUrl}/book/${v.slug}\nReply STOP to opt out`,
-                wa: { name: 'xtra_winback', params: [g.firstName, v.name], button: `book/${v.slug}` } });
+              await notifyGuest({ channel: 'both', phone: g.phone, email: g.emailOptIn ? g.email : null, venueId: v.id, guestId: g.id, ...M.winback(v, g), kind });
               sent++;
             }
           }

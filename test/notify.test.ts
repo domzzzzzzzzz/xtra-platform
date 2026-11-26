@@ -54,6 +54,6 @@ describe('WhatsApp templates', () => {
     vi.stubGlobal('fetch', async () => { throw new Error('Resend must not be called'); });
     expect(await send({ channel: 'email', to: 'nour@example.com', kind: 'test', subject: 'Hi', body: 'Hello' })).toBe(true);
     expect(mail.opts).toMatchObject({ host: 'smtp.hostinger.com', port: 465, secure: true, auth: { user: 'info@xtratickets.com', pass: 'pw' } });
-    expect(mail.sent[0]).toMatchObject({ from: 'XTRA <no-reply@xtratickets.com>', to: 'nour@example.com', subject: 'Hi', text: 'Hello' });
+    expect(mail.sent[0]).toMatchObject({ from: '"XTRA" <no-reply@xtratickets.com>', to: 'nour@example.com', subject: 'Hi', text: 'Hello' });
   });
 });

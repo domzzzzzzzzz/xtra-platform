@@ -5,7 +5,8 @@ import { badRequest, conflict, notFound } from '../lib/errors.js';
 import { computeTicketTotals } from '../lib/pricing.js';
 import { normalizePhone, qrToken, shortCode } from '../lib/codes.js';
 import { config } from '../config.js';
-import { send, waPath } from '../integrations/notify.js';
+import { emailParts, send } from '../integrations/notify.js';
+import { ticketOrderEmail, ticketWa } from './guest-messages.js';
 import { getPlatformSettings } from './admin.js';
 import { upsertGuest, ensureVenueGuest, recordSpend } from './guests-service.js';
 
@@ -217,15 +218,52 @@ export async function onTicketsPaid(orderId: string) {
   const [event] = await db.select().from(schema.events).where(eq(schema.events.id, o.eventId));
   const [venue] = await db.select().from(schema.venues).where(eq(schema.venues.id, o.venueId));
   if (o.guestId) await recordSpend(db, o.venueId, o.guestId, o.subtotal - o.discount, o.id, 'tickets', false);
-  const list = await db.select().from(schema.tickets).where(eq(schema.tickets.orderId, o.id));
-  const when = event.startsAt.toLocaleString('en-GB', { timeZone: venue.timezone, weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-  for (const t of list) {
-    const phone = t.phone ?? o.buyerPhone;
-    const email = t.email ?? o.buyerEmail;
-    const body = `${t.firstName}, your ticket for ${event.title} at ${venue.name}, ${when}. Show this QR at the door, or add it to your wallet: ${ticketUrl(t.qrToken)}`;
-    if (phone) await send({ channel: 'whatsapp', to: phone, kind: 'ticket', body, venueId: venue.id, guestId: o.guestId,
-      whatsappTemplate: { name: 'xtra_ticket', params: [t.firstName, event.title, venue.name, when], button: waPath(ticketUrl(t.qrToken)) } });
-    if (email) await send({ channel: 'email', to: email, kind: 'ticket', subject: `Your ticket: ${event.title}`, body, venueId: venue.id, guestId: o.guestId });
+  const list = await db.select({ t: schema.tickets, zone: schema.eventZones.name, seat: schema.eventSeats.label }).from(schema.tickets)
+    .innerJoin(schema.eventZones, eq(schema.eventZones.id, schema.tickets.zoneId))
+    .leftJoin(schema.eventSeats, eq(schema.eventSeats.id, schema.tickets.seatId))
+    .where(eq(schema.tickets.orderId, o.id));
+  const when = event.startsAt.toLocaleString('en-GB', { timeZone: venue.timezone, weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true });
+  const typeOf = (x: (typeof list)[number]) => (x.seat ? `${x.zone} · ${x.seat}` : x.zone);
+  const nameOf = (x: (typeof list)[number]) => `${x.t.firstName} ${x.t.lastName}`.trim() || 'Guest';
+  const [buyer] = o.guestId ? await db.select().from(schema.guests).where(eq(schema.guests.id, o.guestId)) : [];
+  const buyerName = buyer?.firstName || list[0]?.t.firstName || 'there';
+
+  // WhatsApp: a holder with their own number gets their ticket; the buyer gets one
+  // message for the rest (their ticket, or a link to the whole order).
+  const buyerPhone = o.buyerPhone ? normalizePhone(o.buyerPhone) : null;
+  const mine: typeof list = [];
+  for (const x of list) {
+    const phone = x.t.phone ? normalizePhone(x.t.phone) : null;
+    if (!phone || phone === buyerPhone) { mine.push(x); continue; }
+    const body = `Hi ${x.t.firstName}, your ticket for ${event.title} at ${venue.name}, ${when} (${typeOf(x)}). Show this QR at the door: ${ticketUrl(x.t.qrToken)}`;
+    await send({ channel: 'whatsapp', to: phone, kind: 'ticket', body, venueId: venue.id, guestId: o.guestId,
+      whatsappTemplate: ticketWa(venue, { firstName: x.t.firstName, qrToken: x.t.qrToken, type: typeOf(x) }, event.title, when) });
+  }
+  if (buyerPhone && mine.length === 1) {
+    const x = mine[0];
+    await send({ channel: 'whatsapp', to: buyerPhone, kind: 'ticket', venueId: venue.id, guestId: o.guestId,
+      body: `Hi ${x.t.firstName}, your ticket for ${event.title} at ${venue.name}, ${when} (${typeOf(x)}). Show this QR at the door: ${ticketUrl(x.t.qrToken)}`,
+      whatsappTemplate: ticketWa(venue, { firstName: buyerName, qrToken: x.t.qrToken, type: typeOf(x) }, event.title, when) });
+  } else if (buyerPhone && mine.length > 1) {
+    await send({ channel: 'whatsapp', to: buyerPhone, kind: 'ticket_order', venueId: venue.id, guestId: o.guestId,
+      body: `Hi ${buyerName}, your ${mine.length} tickets for ${event.title} at ${venue.name}, ${when} are ready. Open them and share each one with its guest: ${config.publicAppUrl}/o/${o.code}`,
+      whatsappTemplate: { name: 'xtra_ticket_order', header: venue.name, params: [buyerName, String(mine.length), event.title, when], button: `o/${o.code}` } });
+  }
+
+  // Email: the buyer gets one email with every ticket and the receipt; a holder with
+  // a different email gets an email with just their own ticket.
+  const byEmail = new Map<string, typeof list>();
+  if (o.buyerEmail) byEmail.set(o.buyerEmail.toLowerCase(), list);
+  for (const x of list) {
+    const e = x.t.email?.toLowerCase();
+    if (e && !byEmail.has(e)) byEmail.set(e, [x]);
+  }
+  for (const [email, items] of byEmail) {
+    const isBuyer = items === list && !!o.buyerEmail;
+    const m = ticketOrderEmail(venue, isBuyer ? o : { ...o, subtotal: 0, discount: 0, fee: 0, feeVat: 0, total: 0 }, event.title, when,
+      items.map((x) => ({ name: nameOf(x), type: typeOf(x), qrToken: x.t.qrToken })), isBuyer ? buyerName : items[0].t.firstName || 'there');
+    if (!isBuyer) m.mail.doc.receipt = undefined;
+    await send({ channel: 'email', to: email, kind: m.kind, subject: m.subject, venueId: venue.id, guestId: o.guestId, ...emailParts(venue, m.mail.doc) });
   }
 }
 

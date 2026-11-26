@@ -20,6 +20,7 @@ import automations from './modules/automations.js';
 import media, { mediaFiles } from './modules/media.js';
 import reports from './modules/reports.js';
 import legal from './modules/legal.js';
+import inbox, { unsubscribePage, whatsappWebhook } from './modules/inbox.js';
 
 export async function buildApp(opts: FastifyServerOptions = {}) {
   const app = Fastify({ trustProxy: true, ...opts });
@@ -44,11 +45,13 @@ export async function buildApp(opts: FastifyServerOptions = {}) {
   app.get('/health', async () => ({ ok: true }));
 
   await app.register(async (api) => {
-    for (const m of [auth, admin, venues, reservations, tabs, ticketing, publicRoutes, crm, automations, media, reports]) await api.register(m);
+    for (const m of [auth, admin, venues, reservations, tabs, ticketing, publicRoutes, crm, automations, media, reports, inbox]) await api.register(m);
   }, { prefix: '/api' });
   await app.register(payments);
   await app.register(mediaFiles);
   await app.register(legal);
+  await app.register(whatsappWebhook);
+  await app.register(unsubscribePage);
 
   // The web app: one page for staff and guests. Guest links open guest screens.
   const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../web');
