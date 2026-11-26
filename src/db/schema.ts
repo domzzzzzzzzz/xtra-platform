@@ -35,6 +35,21 @@ export const users = pgTable('users', {
   createdAt: createdAt(),
 }, (t) => [uniqueIndex('users_email_uq').on(t.email)]);
 
+export type VenueSettings = {
+  where?: string;
+  color?: string;
+  firstSlot?: number; // minutes from midnight, may pass 24h
+  lastSlot?: number;
+  slotStep?: number;
+  maxPerSlot?: number;
+  approval?: 'manual' | 'auto';
+  askNames?: boolean;
+  mapPick?: boolean;
+  socials?: Record<string, string>;
+  connections?: Record<string, boolean>;
+  automations?: Record<string, boolean>;
+};
+
 export const notifyChannel = pgEnum('notify_channel', ['email', 'whatsapp', 'both']);
 
 export const venues = pgTable('venues', {
@@ -59,6 +74,8 @@ export const venues = pgTable('venues', {
   /** 1 community point for every `pointsPerAmount` piastres spent. Default: 1 point per EGP 100. */
   pointsPerAmount: integer('points_per_amount').notNull().default(10000),
   paymobSubaccount: text('paymob_subaccount'),
+  /** Screen settings the venue edits in Venue setup (slots grid, toggles, socials, automations). */
+  settings: jsonb('settings').$type<VenueSettings>().notNull().default({}),
   active: boolean('active').notNull().default(true),
   createdAt: createdAt(),
 }, (t) => [uniqueIndex('venues_slug_uq').on(t.slug)]);
@@ -100,6 +117,8 @@ export const floorItems = pgTable('floor_items', {
   zoneId: uuid('zone_id'),
   /** For zones: the minimum spend for a table in this area. */
   minSpend: integer('min_spend').notNull().default(0),
+  /** For zones: deposit asked per booking in this area. */
+  deposit: integer('deposit').notNull().default(0),
   color: text('color'),
   sort: integer('sort').notNull().default(0),
 }, (t) => [index('floor_items_venue_idx').on(t.venueId)]);
@@ -113,6 +132,8 @@ export const timeSlots = pgTable('time_slots', {
   endsAt: text('ends_at').notNull(), // "23:30"
   /** Max people for this slot. 0 = no limit. */
   capacity: integer('capacity').notNull().default(0),
+  /** Max bookings in this slot. 0 = no limit. */
+  maxBookings: integer('max_bookings').notNull().default(0),
   active: boolean('active').notNull().default(true),
 });
 
@@ -255,6 +276,10 @@ export const tabs = pgTable('tabs', {
   reservationId: uuid('reservation_id').references(() => reservations.id, { onDelete: 'set null' }),
   tableId: uuid('table_id'),
   guestId: uuid('guest_id').references(() => guests.id),
+  /** Walk-ins without a booking. */
+  guestName: text('guest_name'),
+  partySize: integer('party_size').notNull().default(0),
+  billRequestedAt: timestamp('bill_requested_at', { withTimezone: true }),
   status: tabStatus('status').notNull().default('open'),
   openedBy: uuid('opened_by'),
   subtotal: integer('subtotal').notNull().default(0),
@@ -294,6 +319,10 @@ export const events = pgTable('events', {
   title: text('title').notNull(),
   posterUrl: text('poster_url'),
   description: text('description').notNull().default(''),
+  lineup: text('lineup').notNull().default(''),
+  color: text('color'),
+  /** Off: guests pick from a simple ticket list (standing types only). */
+  seatMap: boolean('seat_map').notNull().default(true),
   rules: jsonb('rules').$type<string[]>().notNull().default([]),
   startsAt: timestamp('starts_at', { withTimezone: true }).notNull(),
   endsAt: timestamp('ends_at', { withTimezone: true }),
@@ -322,6 +351,8 @@ export const eventZones = pgTable('event_zones', {
   price: integer('price').notNull().default(0),
   capacity: integer('capacity').notNull().default(0),
   seatsPerTable: integer('seats_per_table').notNull().default(1),
+  /** For decor: stage | bar | dj | entrance. */
+  shape: text('shape'),
   x: real('x').notNull().default(0),
   y: real('y').notNull().default(0),
   w: real('w').notNull().default(1),
@@ -336,6 +367,10 @@ export const eventSeats = pgTable('event_seats', {
   eventId: uuid('event_id').notNull().references(() => events.id, { onDelete: 'cascade' }),
   zoneId: uuid('zone_id').notNull().references(() => eventZones.id, { onDelete: 'cascade' }),
   label: text('label').notNull(),
+  /** People at this table. A table sells all its seats at once. */
+  seats: integer('seats').notNull().default(1),
+  shape: text('shape'),
+  rotation: real('rotation').notNull().default(0),
   x: real('x').notNull().default(0),
   y: real('y').notNull().default(0),
   enabled: boolean('enabled').notNull().default(true),
@@ -436,11 +471,15 @@ export const campaignChannel = pgEnum('campaign_channel', ['whatsapp', 'email'])
 export const campaignStatus = pgEnum('campaign_status', ['draft', 'scheduled', 'sending', 'sent']);
 
 export type Segment = {
+  /** Which saved audience the venue picked (for display only). */
+  key?: string;
   tags?: string[];
   tierIds?: string[];
   minVisits?: number;
   lastVisitBeforeDays?: number;
   gender?: 'male' | 'female' | 'other';
+  boughtTickets?: boolean;
+  birthdayWithinDays?: number;
 };
 
 export const campaigns = pgTable('campaigns', {

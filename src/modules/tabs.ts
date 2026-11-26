@@ -1,12 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { and, asc, eq, inArray, ne } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { parse, venueAccess, MANAGERS, SERVICE } from '../lib/http.js';
-import { badRequest, conflict, notFound } from '../lib/errors.js';
+import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { computeBill } from '../lib/pricing.js';
 import { config } from '../config.js';
-import { recordSpend } from './guests-service.js';
+import { recordSpend, upsertGuest, ensureVenueGuest } from './guests-service.js';
 import { startPayment } from './payments.js';
 
 type P = { venueId: string };
@@ -109,15 +109,21 @@ export default async function tabs(app: FastifyInstance) {
 
   app.post<{ Params: P }>('/venues/:venueId/tabs', async (req, reply) => {
     const { user } = await venueAccess(req, req.params.venueId, SERVICE);
-    const b = parse(z.object({ tableId: z.string().uuid().optional(), reservationId: z.string().uuid().optional() }), req.body ?? {});
+    const b = parse(z.object({
+      tableId: z.string().uuid().optional(), reservationId: z.string().uuid().optional(),
+      /** Walk-ins: name and party size, phone to keep them as a guest. */
+      guestName: z.string().max(80).optional(), partySize: z.number().int().min(1).max(50).optional(), phone: z.string().min(8).max(20).optional(),
+    }), req.body ?? {});
     let { tableId } = b;
     let guestId: string | null = null;
+    let partySize = b.partySize ?? 0;
     if (b.reservationId) {
       const [r] = await db.select().from(schema.reservations)
         .where(and(eq(schema.reservations.id, b.reservationId), eq(schema.reservations.venueId, req.params.venueId)));
       if (!r) throw notFound('Booking not found');
       tableId = tableId ?? r.tableId ?? undefined;
       guestId = r.guestId;
+      partySize = r.partySize;
       const [dup] = await db.select({ id: schema.tabs.id }).from(schema.tabs).where(and(eq(schema.tabs.reservationId, r.id), eq(schema.tabs.status, 'open')));
       if (dup) throw conflict('This booking already has an open bill', 'tab_exists');
     }
@@ -127,8 +133,16 @@ export default async function tabs(app: FastifyInstance) {
       const [busy] = await db.select({ id: schema.tabs.id }).from(schema.tabs).where(and(eq(schema.tabs.tableId, tableId), eq(schema.tabs.status, 'open')));
       if (busy) throw conflict('This table already has an open bill', 'tab_exists');
     }
+    if (!guestId && b.phone) {
+      const [first, ...rest] = (b.guestName ?? 'Walk-in').trim().split(/\s+/);
+      const g = await upsertGuest(db, { phone: b.phone, firstName: first, lastName: rest.join(' ') });
+      await ensureVenueGuest(db, req.params.venueId, g.id);
+      await recordSpend(db, req.params.venueId, g.id, 0, g.id, 'visit', true);
+      guestId = g.id;
+    }
     const [tab] = await db.insert(schema.tabs).values({
       venueId: req.params.venueId, tableId: tableId ?? null, reservationId: b.reservationId ?? null, guestId, openedBy: user.sub,
+      guestName: b.guestName ?? null, partySize,
     }).returning();
     reply.code(201);
     return { ...tab, ...(await billFor(tab)) };
@@ -166,6 +180,32 @@ export default async function tabs(app: FastifyInstance) {
     const sent = await db.update(schema.tabItems).set({ status: 'sent' })
       .where(and(eq(schema.tabItems.tabId, tab.id), eq(schema.tabItems.status, 'new'))).returning();
     return { sent: sent.length, items: sent };
+  });
+
+  /* Take one off: from items not sent yet first. Sent items need a manager. */
+  app.post<{ Params: PT }>('/venues/:venueId/tabs/:tabId/remove', async (req) => {
+    const { role } = await venueAccess(req, req.params.venueId, SERVICE);
+    const tab = await loadTab(req.params.venueId, req.params.tabId);
+    openOnly(tab);
+    const { menuItemId } = parse(z.object({ menuItemId: z.string().uuid() }), req.body);
+    const rows = await db.select().from(schema.tabItems)
+      .where(and(eq(schema.tabItems.tabId, tab.id), eq(schema.tabItems.menuItemId, menuItemId), ne(schema.tabItems.status, 'void')))
+      .orderBy(desc(schema.tabItems.createdAt));
+    const it = rows.find((r) => r.status === 'new') ?? rows[0];
+    if (!it) throw notFound('Item not on this bill');
+    if (it.status !== 'new' && !MANAGERS.includes(role)) throw forbidden('Ask a manager to remove an item that was sent to the bar');
+    if (it.qty > 1) await db.update(schema.tabItems).set({ qty: it.qty - 1 }).where(eq(schema.tabItems.id, it.id));
+    else await db.update(schema.tabItems).set({ status: 'void' }).where(eq(schema.tabItems.id, it.id));
+    return { ...tab, ...(await billFor(tab)) };
+  });
+
+  /* The table asked for the bill: shows on the floor map. */
+  app.post<{ Params: PT }>('/venues/:venueId/tabs/:tabId/ask-bill', async (req) => {
+    await venueAccess(req, req.params.venueId, SERVICE);
+    const tab = await loadTab(req.params.venueId, req.params.tabId);
+    openOnly(tab);
+    const [u] = await db.update(schema.tabs).set({ billRequestedAt: new Date() }).where(eq(schema.tabs.id, tab.id)).returning();
+    return u;
   });
 
   app.post<{ Params: PT & { itemId: string } }>('/venues/:venueId/tabs/:tabId/items/:itemId/void', async (req) => {

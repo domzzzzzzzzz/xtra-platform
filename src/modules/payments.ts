@@ -68,7 +68,8 @@ export default async function payments(app: FastifyInstance) {
     reply.type('text/html').send(`<!doctype html><meta name=viewport content="width=device-width"><title>Test checkout</title>
 <body style="font-family:system-ui;max-width:420px;margin:40px auto;padding:0 16px">
 <h2>Test checkout</h2><p>Amount: EGP ${(pay.amount / 100).toFixed(2)}</p><p>Status: ${pay.status}</p>
-<form method=post><button name=result value=paid style="padding:12px 20px">Pay</button> <button name=result value=failed style="padding:12px 20px">Fail</button></form></body>`);
+<form method=post><button name=result value=paid style="padding:12px 20px">Pay</button> <button name=result value=failed style="padding:12px 20px">Fail</button></form>
+<script>document.querySelector('form').addEventListener('submit',async e=>{e.preventDefault();const r=e.submitter.value;await fetch(location.href,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({result:r})});document.body.innerHTML='<h2>'+(r==='paid'?'Paid':'Payment failed')+'</h2><p>You can close this tab and go back.</p>';if(window.opener)setTimeout(()=>window.close(),900)})</script></body>`);
   });
 
   app.post<{ Params: { paymentId: string } }>('/dev/pay/:paymentId', async (req) => {

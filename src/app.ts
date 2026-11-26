@@ -1,6 +1,9 @@
 import Fastify, { type FastifyServerOptions } from 'fastify';
 import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
+import fastifyStatic from '@fastify/static';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 import { AppError } from './lib/errors.js';
 import auth from './modules/auth.js';
@@ -12,6 +15,7 @@ import ticketing from './modules/ticketing.js';
 import publicRoutes from './modules/public.js';
 import crm from './modules/crm.js';
 import payments from './modules/payments.js';
+import automations from './modules/automations.js';
 
 export async function buildApp(opts: FastifyServerOptions = {}) {
   const app = Fastify({ trustProxy: true, ...opts });
@@ -36,8 +40,14 @@ export async function buildApp(opts: FastifyServerOptions = {}) {
   app.get('/health', async () => ({ ok: true }));
 
   await app.register(async (api) => {
-    for (const m of [auth, admin, venues, reservations, tabs, ticketing, publicRoutes, crm]) await api.register(m);
+    for (const m of [auth, admin, venues, reservations, tabs, ticketing, publicRoutes, crm, automations]) await api.register(m);
   }, { prefix: '/api' });
   await app.register(payments);
+
+  // The web app: one page for staff and guests. Guest links open guest screens.
+  const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../web');
+  await app.register(fastifyStatic, { root: webRoot, prefix: '/web/', wildcard: false, index: false });
+  const page = async (_req: unknown, reply: any) => reply.header('Cache-Control', 'no-cache').sendFile('index.html');
+  for (const route of ['/', '/book/:slug', '/b/:code', '/p/:token', '/t/:token', '/e/:eventId', '/o/:code', '/me', '/paid']) app.get(route, page);
   return app;
 }
