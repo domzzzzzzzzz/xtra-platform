@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
 import fastifyStatic from '@fastify/static';
 import path from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 import { AppError } from './lib/errors.js';
@@ -49,7 +50,10 @@ export async function buildApp(opts: FastifyServerOptions = {}) {
   // The web app: one page for staff and guests. Guest links open guest screens.
   const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../web');
   await app.register(fastifyStatic, { root: webRoot, prefix: '/web/', wildcard: false, index: false });
-  const page = async (_req: unknown, reply: any) => reply.header('Cache-Control', 'no-cache').sendFile('index.html');
+  // Each start gets a new asset version, so browsers and Cloudflare pick up new CSS/JS after a deploy.
+  const version = Date.now().toString(36);
+  const html = (await readFile(path.join(webRoot, 'index.html'), 'utf8')).replace(/(\/web\/[\w./-]+\.(?:css|js))"/g, `$1?v=${version}"`);
+  const page = async (_req: unknown, reply: any) => reply.header('Cache-Control', 'no-cache').type('text/html').send(html);
   for (const route of ['/', '/book/:slug', '/b/:code', '/p/:token', '/t/:token', '/e/:eventId', '/o/:code', '/me', '/paid']) app.get(route, page);
   return app;
 }
