@@ -251,7 +251,7 @@ const egp2=n=>'EGP'+NB+(Math.round(n*100)/100).toLocaleString('en-US',{maximumFr
 const first=b=>G(b.gid).name.split(' ')[0];
 
 /* ---------- shell ---------- */
-const NAV=[['floor','Floor','floor','Tonight'],['bookings','Bookings','bookings','Tonight'],['door','Door','door','Tonight'],['orders','Orders','orders','Tonight'],['events','Events','events','Grow'],['marketing','Marketing','marketing','Grow'],['guests','Guests','guests','Grow'],['community','Community','community','Grow'],['page','Booking page','page','Set up'],['editor','Floor map','editor','Set up'],['setup','Venue setup','setup','Set up'],['admin','XTRA admin','admin','XTRA']];
+const NAV=[['floor','Floor','floor','Tonight'],['bookings','Bookings','bookings','Tonight'],['door','Door','door','Tonight'],['orders','Orders','orders','Tonight'],['events','Events','events','Grow'],['marketing','Marketing','marketing','Grow'],['guests','Guests','guests','Grow'],['community','Community','community','Grow'],['reports','Reports','reports','Grow'],['page','Booking page','page','Set up'],['editor','Floor map','editor','Set up'],['setup','Venue setup','setup','Set up'],['admin','XTRA admin','admin','XTRA']];
 /** What this person may open at the current venue (from /auth/me, already limited by the venue's features). */
 const PERMS_NOW=()=>ME.venues[S.vi]?.perms||[],FEAT_NOW=()=>ME.venues[S.vi]?.features||[];
 const CAN=p=>p==='admin'?!!ME.user.isSuperAdmin:p==='page'?PERMS_NOW().includes('setup')&&FEAT_NOW().includes('reservations'):PERMS_NOW().includes(p);
@@ -259,7 +259,7 @@ const HAS=f=>FEAT_NOW().includes(f);
 const ROLES={manager:'Manager',door:'Door',waiter:'Waiter'};
 const ROLE_NAME={owner:'Owner',manager:'Manager',door:'Door',waiter:'Waiter'};
 const whoBox=()=>`<div class="role">Signed in</div><div class="who"><b>${esc(ME.user.name)}</b><span class="mute">${esc(ME.user.isSuperAdmin?'XTRA admin':ME.venues[S.vi]?.roleName||ROLE_NAME[VENUES[S.vi].role]||'')}</span></div><button class="btn ghost sm" data-a="signout">Sign out</button>`;
-const MORE=['events','marketing','community','page','editor','setup','admin'];
+const MORE=['events','marketing','community','reports','page','editor','setup','admin'];
 function shell(){
   const VV=VENUES[S.vi],navs=NAV.filter(n=>CAN(n[2]));ROLE=navs.length>5?'manager':'staff';
   if(!navs.length){$('#rail').innerHTML=`${LOGO}<div class="sp"></div>${whoBox()}`;$('#tabs').innerHTML='';$('#mbar').innerHTML=LOGO;return}
@@ -494,7 +494,7 @@ function guestPhone(){
       ${I.askNames?gp.others.map((o,i)=>`<div class="gcard"><div class="gch">Guest ${i+2}</div><div style="font-size:14px">${esc(o.name)}<br>${esc(o.phone)} · ${esc(o.email)}<br>${esc(o.ig)} · ${esc(o.gender)}</div></div>`).join(''):''}
       <div class="amount" style="font-size:14px">Minimum spend <b>${egp(A.min)}</b>${A.dep?`<br>Deposit <b>${egp(A.dep)}</b>, paid only if the venue accepts`:''}</div>`}
     body=`<div class="wiz"><div class="wbar">${ST.map((s,i)=>`<i class="${i<=gp.w?'on':''}"></i>`).join('')}</div><div class="wlbl">Step ${gp.w+1} of ${ST.length} · <b>${cur.t}</b></div></div><div class="gbody">${inner}${gp.err?`<div class="err" role="alert">${esc(gp.err)}</div>`:''}</div>
-      <div class="wnav">${gp.w?'<button class="btn ghost" data-a="gpprev">Back</button>':''}<button class="gbtn" data-a="${cur.k==='review'?'gpsubmit':'gpnext'}" ${gp.busy?'disabled':''}>${cur.k==='review'?(gp.busy?'Sending…':'Send request'):'Continue'}</button></div>${cur.k==='review'?'<div class="wfoot">No payment now. You pay the deposit only if the venue accepts.</div>':''}${socials&&gp.w===0?`<div class="wfoot">${socials}</div>`:''}`;
+      <div class="wnav">${gp.w?'<button class="btn ghost" data-a="gpprev">Back</button>':''}<button class="gbtn" data-a="${cur.k==='review'?'gpsubmit':'gpnext'}" ${gp.busy?'disabled':''}>${cur.k==='review'?(gp.busy?'Sending…':'Send request'):'Continue'}</button></div>${cur.k==='review'?'<div class="wfoot">No payment now. You pay the deposit only if the venue accepts. By sending you agree to the <a href="/terms" target="_blank" rel="noopener">Terms</a> and <a href="/refunds" target="_blank" rel="noopener">deposit rules</a>.</div>':''}${socials&&gp.w===0?`<div class="wfoot">${socials}</div>`:''}${gp.w===0?LEGAL:''}`;
   }
   else body=gp.st?phoneStatus(gp.st):'<div class="loading">Loading…</div>';
   const loc=gp.step==='form'&&gp.w===0?`<div class="gbody gloc"><div class="lbl" style="font-size:15px">Location</div>${locCard(PV)}</div>`:'';
@@ -566,7 +566,7 @@ function vSetup(){
 }
 
 /* ---------- render ---------- */
-function render(){if(!GUEST&&S&&ME&&!NAV.some(n=>CAN(n[2]))){shell();$('#main').innerHTML='<div class="loading">Your role has no screens at this venue yet. Ask your manager to give it some.</div>';return}if(GUEST){const g=document.querySelector('#guest .gscroll'),st=g?.scrollTop;$('#guest').innerHTML=guestView();const g2=document.querySelector('#guest .gscroll');if(st&&g2)g2.scrollTop=st;return}if(!S||!ME)return;shell();const VW={floor:vFloor,bookings:vBookings,door:vDoor,orders:vOrders,guests:vGuests,page:vPage,setup:vSetup,editor:vEditor,events:vEvents,marketing:vMarketing,community:vCommunity,admin:vAdmin}[VIEW];const gs=$('#gscroll')?.scrollTop;$('#main').innerHTML=VW();drawMap();if(gs&&$('#gscroll'))$('#gscroll').scrollTop=gs;if(S.sheet)openSheet(S.sheet,true)}
+function render(){if(!GUEST&&S&&ME&&!NAV.some(n=>CAN(n[2]))){shell();$('#main').innerHTML='<div class="loading">Your role has no screens at this venue yet. Ask your manager to give it some.</div>';return}if(GUEST){const g=document.querySelector('#guest .gscroll'),st=g?.scrollTop;$('#guest').innerHTML=guestView();const g2=document.querySelector('#guest .gscroll');if(st&&g2)g2.scrollTop=st;return}if(!S||!ME)return;shell();const VW={floor:vFloor,bookings:vBookings,door:vDoor,orders:vOrders,guests:vGuests,page:vPage,setup:vSetup,editor:vEditor,events:vEvents,marketing:vMarketing,community:vCommunity,reports:vReports,admin:vAdmin}[VIEW];const gs=$('#gscroll')?.scrollTop;$('#main').innerHTML=VW();drawMap();if(gs&&$('#gscroll'))$('#gscroll').scrollTop=gs;if(S.sheet)openSheet(S.sheet,true)}
 
 /* ---------- sheets ---------- */
 function qrSVG(txt){try{const q=qrcode(0,'M');q.addData(txt);q.make();const n=q.getModuleCount();let p='';for(let r=0;r<n;r++)for(let c=0;c<n;c++)if(q.isDark(r,c))p+=`M${c} ${r}h1v1h-1z`;return `<svg viewBox="0 0 ${n} ${n}" shape-rendering="crispEdges"><path d="${p}" fill="#12153f"/></svg>`}catch(e){return `<div style="width:132px;height:132px;display:grid;place-items:center;color:#12153f;font-weight:800;line-height:1.2">${esc(txt)}</div>`}}
@@ -759,7 +759,8 @@ document.addEventListener('change',e=>{const el=e.target;if(!S)return;
 Object.assign(ICON,{
 events:'<path d="M3 6h18v3.5a2.5 2.5 0 0 0 0 5V18H3v-3.5a2.5 2.5 0 0 0 0-5z"/><path d="M14.5 6.5v11" stroke-dasharray="1.5 2.5"/>',
 marketing:'<path d="M4 10v4h3l8 4.5v-13L7 10z"/><path d="M18.5 9a4 4 0 0 1 0 6"/>',
-community:'<path d="M12 3.5l2.5 5.1 5.6.8-4 4 .9 5.6-5-2.7-5 2.7.9-5.6-4-4 5.6-.8z"/>'});
+community:'<path d="M12 3.5l2.5 5.1 5.6.8-4 4 .9 5.6-5-2.7-5 2.7.9-5.6-4-4 5.6-.8z"/>',
+reports:'<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'});
 const tiers=()=>CFG().tiers;
 const tierOf=g=>[...tiers()].reverse().find(t=>g.spend>=t.min)||tiers()[0];
 const points=g=>g.pts??0;
@@ -768,6 +769,7 @@ const EVL=id=>S.events.find(e=>e.id===id);
 const SEG={all:['Everyone who agreed',g=>true],vip:['VIP guests',g=>g.tags.includes('VIP')],regular:['Regulars, 5+ visits',g=>g.visits>=5],lapsed:['Not seen in 45 days',g=>g.lastAt&&Date.now()-new Date(g.lastAt)>45*864e5],tix:['Bought tickets before',g=>g.tix],bday:['Birthday in the next month',g=>g.bday]};
 const reach=(seg,ch)=>S.guests.filter(g=>!g.walkin&&!g.tags.includes('Blocked')&&(ch==='email'?g.emailConsent&&g.email:g.consent)&&SEG[seg][1](g));
 const pct=x=>Math.round(x*100)+'%';
+const LEGAL=`<div class="legal"><a href="/terms" target="_blank" rel="noopener">Terms</a> · <a href="/privacy" target="_blank" rel="noopener">Privacy</a> · <a href="/refunds" target="_blank" rel="noopener">Refunds</a></div>`;
 const poster=(e,cls='poster')=>`<div class="${cls}${e.poster?' img':''}" style="--pc:${e.color}${e.poster?`;background-image:url('${esc(e.poster)}')`:''}">${e.poster?'':BIGX('px')}<span>${esc(e.night.replace('Tonight · ',''))}</span><b>${esc(e.name)}</b></div>`;
 
 /* ---------- events ---------- */
@@ -904,7 +906,7 @@ function evPhone(e){
     const rules=(e.rules&&e.rules.length?e.rules:DEF_RULES(e));
     body=`${poster(e,'poster big')}<div class="gbody"><h2 style="font-size:24px">${esc(e.name)}</h2><div class="evinfo"><div style="grid-column:1/-1"><small>Venue</small>${esc(VV.name)}${VV.where?', '+esc(VV.where):''}</div><div><small>Date</small>${esc(e.night.replace('Tonight · ',''))}</div><div><small>Doors</small>${e.doors}</div>${e.lineup?`<div style="grid-column:1/-1"><small>Line-up</small>${esc(e.lineup)}</div>`:''}</div>
      <div><div class="lbl" style="font-size:15px">Rules</div><ul class="rules">${rules.map(r=>`<li>${esc(r)}</li>`).join('')}</ul></div>
-     <div><div class="lbl" style="font-size:15px">Location</div>${locCard(VV)}</div></div>`;
+     <div><div class="lbl" style="font-size:15px">Location</div>${locCard(VV)}</div>${LEGAL}</div>`;
     const buy=`<button class="gbtn" data-a="tkstart" ${draft||!prices.length?'disabled':''}>${draft?'Not on sale yet':prices.length?'Buy tickets':'Sold out'}</button>`;
     body=`<div class="glay"><div class="gmain">${body}</div><aside class="gside"><div class="buycard"><small>${esc(e.night.replace('Tonight · ',''))} · doors ${e.doors}</small><b>${esc(e.name)}</b><div class="from"><small>Price from</small><b class="num">${egp(from)}</b></div>${buy}</div></aside></div>`;
     bar=`<div class="evbar infobar"><div><small>Price from</small><b class="num">${egp(from)}</b></div>${buy}</div>`;
@@ -936,7 +938,7 @@ function evPhone(e){
      ${pm('instapay','<span><b>InstaPay</b><small>Pay from any Egyptian bank app</small></span>')}
      ${pm('valu','<span><b>Pay in instalments</b><small>valU, Sympl or Aman</small></span>')}
      <div style="font-size:12px;color:#5b6280;text-align:center">You finish on Paymob's secure page</div>`}</div>`;
-    bar=sumbar+`<div class="evbar" style="border:0;padding-top:0"><button class="gbtn" data-a="tkpay" ${P.busy?'disabled':''}>${P.busy?'Opening payment…':C.total===0?'Get my free tickets':'Pay '+egp2(C.total)}</button></div>`;
+    bar=sumbar+`<div class="legal" style="padding:0 16px 6px;text-align:left">By paying you agree to the <a href="/terms" target="_blank" rel="noopener">Terms</a> and <a href="/refunds" target="_blank" rel="noopener">Refund policy</a>.</div><div class="evbar" style="border:0;padding-top:0"><button class="gbtn" data-a="tkpay" ${P.busy?'disabled':''}>${P.busy?'Opening payment…':C.total===0?'Get my free tickets':'Pay '+egp2(C.total)}</button></div>`;
   }
   else if(P.step==='paying'){
     body=flowHead+`<div class="gdone"><h2 style="font-size:22px">Finish paying</h2><p style="margin:0;color:#5b6280">We opened Paymob in a new tab. This page moves on by itself once the payment goes through.</p><div class="loading" style="padding:10px">Waiting for payment…</div>${P.checkoutUrl?`<a class="btn ghost" href="${esc(P.checkoutUrl)}" target="_blank" rel="noopener">Open payment again</a>`:''}</div>`;
@@ -1120,7 +1122,7 @@ let GUEST=null;
 function passScreen(p){const night=p.type==='ticket'?new Date(p.startsAt).toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short',timeZone:TZ}):dparts(p.date).slice(0,3).join(' ');
   const qr=location.origin+location.pathname;
   return `<div class="gbody"><div class="wpass" style="--pc:#2e3192"><div class="pass-h"><b>${esc(p.venue)}</b><span>${esc(p.type==='ticket'?p.ticketType+(p.seat?' · '+p.seat:''):'Table booking')}</span></div><div class="pt"><small>${p.type==='ticket'?'Event':'Booking'}</small><b>${esc(p.type==='ticket'?p.event:p.venue)}</b></div><div class="pr"><div><small>Date</small>${esc(night)}</div><div><small>${p.type==='ticket'?'Doors':'Time'}</small>${esc(p.type==='ticket'?t12((()=>{const [h,m]=new Intl.DateTimeFormat('en-GB',{timeZone:TZ,hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(p.startsAt)).split(':').map(Number);return h*60+m})()):t12(hm2min(p.time.split(' ')[0])))}</div></div><div class="pr"><div><small>Guest</small>${esc(p.name)}</div><div><small>Status</small>${p.used?'Checked in':'Valid'}</div></div><div class="pq"><span>${qrSVG(qr)}</span><small>Show this at the door</small></div></div>
-  ${p.googleWalletUrl?`<div class="wallets"><a class="wbtn" href="${esc(p.googleWalletUrl)}" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" width="20" height="20"><rect x="3" y="5" width="18" height="14" rx="3" fill="#4285f4"/><rect x="3" y="9" width="18" height="3" fill="#34a853"/><rect x="3" y="12" width="18" height="3" fill="#fbbc04"/><rect x="3" y="15" width="18" height="4" rx="1" fill="#ea4335"/></svg><span><small>Add to</small>Google Wallet</span></a></div>`:''}
+  ${p.googleWalletUrl||p.appleWallet?.configured?`<div class="wallets">${p.appleWallet?.configured?`<a class="wbtn" href="${esc(p.appleWallet.url)}"><svg viewBox="0 0 24 24" width="20" height="20"><rect x="3" y="5" width="18" height="14" rx="3" fill="#fff"/><rect x="3" y="8" width="18" height="3" fill="#ff5f57"/><rect x="3" y="11" width="18" height="3" fill="#febc2e"/><rect x="3" y="14" width="18" height="3" fill="#28c840"/></svg><span><small>Add to</small>Apple Wallet</span></a>`:''}${p.googleWalletUrl?`<a class="wbtn" href="${esc(p.googleWalletUrl)}" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" width="20" height="20"><rect x="3" y="5" width="18" height="14" rx="3" fill="#4285f4"/><rect x="3" y="9" width="18" height="3" fill="#34a853"/><rect x="3" y="12" width="18" height="3" fill="#fbbc04"/><rect x="3" y="15" width="18" height="4" rx="1" fill="#ea4335"/></svg><span><small>Add to</small>Google Wallet</span></a>`:''}</div>`:''}
   <p style="margin:0;font-size:13px;color:#5b6280;text-align:center">Keep this link. Screenshots work too.</p></div>`}
 function orderScreen(o){const e=PEV[o.eventId],P=o.status;
   const head2=e?`${poster(e)}<div class="gbody" style="padding-bottom:0"><h2 style="font-size:22px">${esc(e.name)}</h2><p style="margin:0;color:#5b6280">${esc(e.night.replace('Tonight · ',''))} · doors ${e.doors} · ${esc(e.venue.name)}</p></div>`:'';
@@ -1156,7 +1158,7 @@ async function bootGuest(path){
 
 /* ================= XTRA admin: venues, features, roles, accounts ================= */
 const FEAT_INFO=[['reservations','Reservations','Booking page, bookings, door check-in'],['ordering','Ordering and bills','Orders by table, bills with minimum spend'],['ticketing','Tickets and events','Ticket pages, seat maps, promo codes'],['marketing','Marketing','WhatsApp and email campaigns, automatic messages'],['guests','Guest list','Guest profiles, notes and tags'],['community','Community','Member tiers, points and perks']];
-const PERM_INFO=[['floor','Floor','Tonight\'s map and tables'],['bookings','Bookings','Accept, decline and add bookings'],['door','Door','Scan passes and tickets, check guests in'],['orders','Orders and bills','Take orders, close bills'],['events','Events','Events, ticket prices, promo codes'],['marketing','Marketing','Send campaigns'],['guests','Guests','Guest list, notes and tags'],['community','Community','Tiers and points'],['editor','Floor map','Draw and change the floor map'],['setup','Venue setup','Slots, areas, booking page, logo'],['staff','Staff and roles','Add staff, make roles']];
+const PERM_INFO=[['floor','Floor','Tonight\'s map and tables'],['bookings','Bookings','Accept, decline and add bookings'],['door','Door','Scan passes and tickets, check guests in'],['orders','Orders and bills','Take orders, close bills'],['events','Events','Events, ticket prices, promo codes'],['marketing','Marketing','Send campaigns'],['guests','Guests','Guest list, notes and tags'],['community','Community','Tiers and points'],['editor','Floor map','Draw and change the floor map'],['setup','Venue setup','Slots, areas, booking page, logo'],['staff','Staff and roles','Add staff, make roles'],['reports','Reports','Money, bookings, no-shows, top guests']];
 const PERM_FEAT={bookings:'reservations',door:'reservations',orders:'ordering',events:'ticketing',marketing:'marketing',guests:'guests',community:'community'};
 const BUILTIN=[['owner','Owner'],['manager','Manager'],['door','Door'],['waiter','Waiter']];
 /** Options for a role picker: built-in roles, then the venue's own roles (value "r:<id>"). */
@@ -1258,3 +1260,33 @@ loadVenue=async(vi,keep)=>{await _loadVenue(vi,keep);if(!keep)await afterLoad()}
     const w=Math.max(start.cw*.35,Math.min(start.cw*3,start.w*d/start.d));start.m.classList.remove('fit');Object.assign(start.svg.style,{height:'auto',maxWidth:'none',width:w+'px'});start.z=w/start.cw},{passive:false});
   document.addEventListener('touchend',()=>{if(!start)return;const z=start.z;start=null;if(z==null)return;S.evp.zoom=z<1.05?'fit':Math.round(Math.min(3,z)*4)/4;render()});
 })();
+
+/* ================= reports ================= */
+const REP={range:'30',data:{},busy:false};
+const repRange=k=>{const to=nightYmd(),d=n=>addDays(to,-n);if(k==='month')return [to.slice(0,8)+'01',to];if(k==='lastmonth'){const t=new Date(to.slice(0,8)+'01T12:00:00Z');t.setUTCDate(0);const e=t.toISOString().slice(0,10);return [e.slice(0,8)+'01',e]}return [d(+k-1),to]};
+function repLoad(){const [f,t]=repRange(REP.range),key=VENUES[S.vi].id+f+t;if(REP.data[key]||REP.busy)return REP.data[key];REP.busy=true;
+  GET(vurl(`/reports?from=${f}&to=${t}`)).then(r=>{REP.data[key]=r}).catch(e=>toast(e.message)).finally(()=>{REP.busy=false;if(VIEW==='reports')render()});return null}
+const P2=v=>egp(v/100),rpct=(a,b)=>b?Math.round(a/b*100):0;
+const METHOD={card:'Card machine',cash:'Cash',instapay:'InstaPay',wallet:'Mobile wallet',paymob:'Paid online',free:'Free',other:'Other'};
+function repChart(days){const W=720,H=170,n=days.length,mx=Math.max(1,...days.map(d=>d.tables+d.tickets)),bw=W/n,lab=n<=10?1:n<=31?Math.ceil(n/8):Math.ceil(n/6);
+  return `<svg class="repchart" viewBox="0 0 ${W} ${H+22}" role="img" aria-label="Money in, per night">${days.map((d,i)=>{const x=i*bw+bw*.15,w=bw*.7,h1=d.tables/mx*H,h2=d.tickets/mx*H;
+    return `<g><title>${esc(dparts(d.day).slice(0,3).join(' '))}: tables ${P2(d.tables)}, tickets ${P2(d.tickets)}${d.noShows?`, ${d.noShows} no-show${d.noShows>1?'s':''}`:''}</title><rect x="${x}" y="${H-h1}" width="${w}" height="${h1}" rx="2" fill="var(--blue)"/><rect x="${x}" y="${H-h1-h2}" width="${w}" height="${h2}" rx="2" fill="var(--teal)"/>${i%lab===0?`<text x="${x+w/2}" y="${H+16}" text-anchor="middle" font-size="11" fill="var(--mute)">${esc(dparts(d.day)[1])}</text>`:''}</g>`}).join('')}<line x1="0" x2="${W}" y1="${H}" y2="${H}" stroke="var(--line)"/></svg>`}
+function repCsv(r){const rows=[['Night','Tables (EGP)','Tickets (EGP)','Bookings','No-shows'],...r.days.map(d=>[d.day,(d.tables/100).toFixed(2),(d.tickets/100).toFixed(2),d.bookings,d.noShows])];
+  const url=URL.createObjectURL(new Blob([rows.map(x=>x.join(',')).join('\n')],{type:'text/csv'}));const a=document.createElement('a');a.href=url;a.download=`${VENUES[S.vi].slug}-${r.from}-to-${r.to}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
+function vReports(){const r=repLoad(),seg=`<div class="seg">${[['7','7 days'],['30','30 days'],['90','90 days'],['month','This month'],['lastmonth','Last month']].map(([k,l])=>`<button class="${REP.range===k?'on':''}" data-a="reprange" data-v="${k}">${l}</button>`).join('')}</div>`;
+  if(!r)return head('Reports','Money, bookings and guests',seg)+'<div class="loading">Loading…</div>';
+  const M=r.money,B=r.bookings,T=r.tickets,showT=HAS('ticketing'),showR=HAS('reservations'),showO=HAS('ordering');
+  const kpi=(v,l,sub='')=>`<div class="kpi"><b class="num">${v}</b><span>${l}</span>${sub?`<small>${sub}</small>`:''}</div>`;
+  return head('Reports',`${esc(dparts(r.from).slice(0,3).join(' '))} to ${esc(dparts(r.to).slice(0,3).join(' '))}`,`<div class="reptop">${seg}<button class="btn ghost sm" data-a="repcsv">Download CSV</button></div>`)+
+  `<div class="kpis">${kpi(P2(M.total),'money in','tables + tickets')}${showO?kpi(P2(M.tables),'tables and bar',`${M.bills} bill${M.bills===1?'':'s'} · avg ${P2(M.avgBill)}`):''}${showT?kpi(P2(M.tickets),'tickets, after promos',`${T.sold} ticket${T.sold===1?'':'s'} · ${T.orders} order${T.orders===1?'':'s'}`):''}${showR?kpi(P2(M.deposits),'deposits paid',''):''}</div>
+  <div class="bigbox" style="margin-bottom:16px"><div class="maphead"><h3>Money in, per night</h3><div class="legend" style="margin:0"><span><i style="background:var(--blue)"></i>Tables and bar</span>${showT?'<span><i style="background:var(--teal)"></i>Tickets</span>':''}</div></div>${repChart(r.days)}</div>
+  ${showR?`<div class="kpis">${kpi(B.confirmed,'confirmed bookings',`${B.requests} request${B.requests===1?'':'s'} · ${B.declined} declined`)}${kpi(B.showed,'came')}${kpi(B.noShows,'no-shows',`${B.noShowRate}% of confirmed`)}${kpi(B.covers,'guests served','bookings and walk-ins')}</div>`:''}
+  <div class="setgrid">
+   <div class="bigbox"><h3>Top guests</h3><p class="mute" style="font-size:14px;margin:4px 0 6px">All time, by spend at ${esc(VENUES[S.vi].name)}.</p>${r.topGuests.length?`<div class="scroll"><table class="gtable"><thead><tr><th>Guest</th><th>Visits</th><th>Spend</th><th class="hide">Last visit</th></tr></thead><tbody>${r.topGuests.map(g=>`<tr ${S.guests?.some(x=>x.id===g.id)?`class="click" data-a="guest" data-v="${g.id}"`:''}><td><b>${esc(g.name)}</b>${(g.tags||[]).includes('VIP')?' <span class="tag vip">VIP</span>':''}<div class="mute" style="font-size:13px">${esc(g.phone)}</div></td><td class="num">${g.visits}</td><td class="num">${P2(g.spend)}</td><td class="hide num">${g.lastVisit?esc(dparts(g.lastVisit).slice(0,3).join(' ')):'–'}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">Guests show up here after their first visit or ticket.</div>'}</div>
+   <div class="bigbox"><h3>How guests paid</h3>${M.byMethod.length?M.byMethod.map(m=>`<div class="conn"><span>${METHOD[m.method]||esc(m.method)} <span class="mute">· ${m.bills} bill${m.bills===1?'':'s'}</span></span><b class="num">${P2(m.total)}</b></div>`).join(''):'<div class="empty">No paid bills in these dates.</div>'}
+    ${M.service||M.vat?`<div class="conn"><span class="mute">Of which service</span><span class="num">${P2(M.service)}</span></div><div class="conn"><span class="mute">Of which VAT</span><span class="num">${P2(M.vat)}</span></div>`:''}
+    ${r.topItems.length?`<h3 style="margin-top:18px">Best sellers</h3>${r.topItems.map(i=>`<div class="conn"><span>${esc(i.name)} <span class="mute">× ${i.qty}</span></span><b class="num">${P2(i.total)}</b></div>`).join('')}`:''}</div>
+  </div>
+  ${showT?`<div class="bigbox" style="margin-top:16px"><h3>Events</h3>${r.events.length?`<div class="scroll"><table class="gtable"><thead><tr><th>Event</th><th>Sold</th><th class="hide">Came</th><th>After promos</th></tr></thead><tbody>${r.events.map(e=>`<tr><td><b>${esc(e.title)}</b><div class="mute" style="font-size:13px">${esc(dparts(e.day).slice(0,3).join(' '))}</div></td><td class="num">${e.sold}${e.capacity?` of ${e.capacity} <span class="mute">(${rpct(e.sold,e.capacity)}%)</span>`:''}</td><td class="hide num">${e.checkedIn}</td><td class="num">${P2(e.net)}</td></tr>`).join('')}</tbody></table></div><p class="mute" style="font-size:13px;margin:10px 0 0">Booking fees paid by guests: ${P2(M.bookingFees)}. Promo discounts given: ${P2(M.ticketDiscounts)}.</p>`:'<div class="empty">No events in these dates.</div>'}</div>`:''}`;
+}
+Object.assign(ACT,{reprange:v=>{REP.range=v;render()},repcsv:()=>{const [f,t]=repRange(REP.range),r=REP.data[VENUES[S.vi].id+f+t];if(r)repCsv(r)}});

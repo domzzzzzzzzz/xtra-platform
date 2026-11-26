@@ -400,3 +400,37 @@ describe('Venue images and location', () => {
     expect((await api.patch(v(), { photoUrl: 'javascript:alert(1)' })).status).toBe(400);
   });
 });
+
+describe('Reports', () => {
+  it('adds up bills, bookings, no-shows, tickets and best guests for a date range', async () => {
+    api.setToken(ownerToken);
+    const r = await api.get(`${v()}/reports`);
+    expect(r.status).toBe(200);
+    expect(r.body.days.length).toBe(30);
+    expect(r.body.money.tables).toBeGreaterThan(0);
+    expect(r.body.money.total).toBe(r.body.money.tables + r.body.money.tickets);
+    expect(r.body.money.byMethod.reduce((s: number, m: any) => s + m.total, 0)).toBe(r.body.money.tables);
+    expect(r.body.bookings.requests).toBeGreaterThan(0);
+    expect(r.body.topGuests.length).toBeGreaterThan(0);
+    expect(r.body.topGuests[0].spend).toBeGreaterThanOrEqual(r.body.topGuests.at(-1).spend);
+    expect(r.body.events.length).toBeGreaterThan(0);
+    expect(r.body.tickets.sold).toBeGreaterThan(0);
+    expect((await api.get(`${v()}/reports?from=2026-02-01&to=2026-01-01`)).status).toBe(400);
+    // Built-in door staff do not see money.
+    await api.post(`${v()}/staff`, { name: 'Dina Door', email: 'dina@lumen.eg', password: 'password1', role: 'door' });
+    await api.login('dina@lumen.eg', 'password1');
+    expect((await api.get(`${v()}/reports`)).status).toBe(403);
+    api.setToken(ownerToken);
+  });
+});
+
+describe('Policies', () => {
+  it('serves Terms, Privacy and Refunds pages', async () => {
+    for (const [u, t] of [['/terms', 'Terms of use'], ['/privacy', 'Law No. 151 of 2020'], ['/refunds', 'Refund and cancellation']]) {
+      const r = await app.inject({ method: 'GET', url: u });
+      expect(r.statusCode).toBe(200);
+      expect(r.headers['content-type']).toContain('text/html');
+      expect(r.body).toContain(t);
+    }
+  });
+});

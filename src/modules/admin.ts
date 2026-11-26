@@ -5,6 +5,7 @@ import { eq, asc } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { parse, staffUser, superAdmin } from '../lib/http.js';
 import { config } from '../config.js';
+import { appleWalletReady, googleWalletReady } from '../integrations/wallet.js';
 import { paymobEnabled } from '../integrations/paymob.js';
 import { slugify } from '../lib/codes.js';
 import { conflict, notFound } from '../lib/errors.js';
@@ -26,7 +27,7 @@ export default async function admin(app: FastifyInstance) {
       bookingFeeBps: s.bookingFeeBps, feeVatBps: s.feeVatBps,
       integrations: {
         paymob: paymobEnabled(), whatsapp: Boolean(config.whatsapp.token && config.whatsapp.phoneNumberId), email: Boolean(config.email.resendKey),
-        googleWallet: Boolean(config.googleWallet.issuerId && config.googleWallet.privateKey),
+        googleWallet: googleWalletReady(), appleWallet: appleWalletReady(),
       },
     };
   });

@@ -21,5 +21,14 @@ export const config = {
     serviceAccountEmail: env.GOOGLE_WALLET_SERVICE_ACCOUNT_EMAIL ?? '',
     privateKey: (env.GOOGLE_WALLET_PRIVATE_KEY ?? '').replace(/\\n/g, '\n'),
   },
+  /** Apple Wallet: Pass Type ID certificate (PEM text; "\n" escapes allowed). */
+  appleWallet: {
+    passTypeId: env.APPLE_PASS_TYPE_ID ?? '',
+    teamId: env.APPLE_TEAM_ID ?? '',
+    cert: (env.APPLE_PASS_CERT ?? '').replace(/\\n/g, '\n'),
+    key: (env.APPLE_PASS_KEY ?? '').replace(/\\n/g, '\n'),
+    keyPassphrase: env.APPLE_PASS_KEY_PASSPHRASE ?? '',
+    wwdr: (env.APPLE_WWDR_CERT ?? '').replace(/\\n/g, '\n'),
+  },
   holdMinutes: 15,
 };

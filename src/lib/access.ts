@@ -11,7 +11,7 @@
 export const FEATURES = ['reservations', 'ordering', 'ticketing', 'marketing', 'guests', 'community'] as const;
 export type Feature = (typeof FEATURES)[number];
 
-export const PERMS = ['floor', 'bookings', 'door', 'orders', 'events', 'marketing', 'guests', 'community', 'editor', 'setup', 'staff'] as const;
+export const PERMS = ['floor', 'bookings', 'door', 'orders', 'events', 'marketing', 'guests', 'community', 'editor', 'setup', 'staff', 'reports'] as const;
 export type Perm = (typeof PERMS)[number];
 
 export const PRESETS: Record<'owner' | 'manager' | 'door' | 'waiter', Perm[]> = {
@@ -39,6 +39,7 @@ const RULES: [method: string, test: RegExp, rule: Rule][] = [
   ['GET', /^$/, ANY],
   ['*', /^$/, { any: ['setup'] }],
   ['*', /^\/(staff|roles)(\/|$)/, { any: ['staff'] }],
+  ['GET', /^\/reports$/, { any: ['reports'] }],
   ['POST', /^\/media$/, { any: ['setup', 'events', 'editor'] }],
   ['GET', /^\/floor$/, ANY],
   ['*', /^\/floor(\/|$)/, { any: ['editor'] }],
