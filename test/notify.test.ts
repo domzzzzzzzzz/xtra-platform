@@ -3,9 +3,14 @@ import { config } from '../src/config.js';
 import { send } from '../src/integrations/notify.js';
 import { client, freshApp } from './helpers.js';
 
+const mail = vi.hoisted(() => ({ opts: null as any, sent: [] as any[] }));
+vi.mock('nodemailer', () => ({
+  default: { createTransport: (opts: any) => { mail.opts = opts; return { sendMail: async (m: any) => { mail.sent.push(m); return { messageId: '<m1@test>' }; } }; } },
+}));
+
 let app: Awaited<ReturnType<typeof freshApp>>;
 beforeAll(async () => { app = await freshApp(); });
-afterAll(async () => { config.whatsapp.token = ''; config.whatsapp.phoneNumberId = ''; vi.unstubAllGlobals(); await app.close(); });
+afterAll(async () => { config.smtp.password = ''; config.whatsapp.token = ''; config.whatsapp.phoneNumberId = ''; vi.unstubAllGlobals(); await app.close(); });
 
 describe('WhatsApp templates', () => {
   it('sends the approved template with body values and the link button', async () => {
@@ -42,5 +47,13 @@ describe('WhatsApp templates', () => {
     expect(sent.template).toEqual({ name: 'hello_world', language: { code: 'en_US' } });
     expect(r.body).toMatchObject({ ok: false, status: 'failed' });
     expect(r.body.error).toContain('bad number');
+  });
+
+  it('Email goes by SMTP (Hostinger) when host, username and password are set', async () => {
+    Object.assign(config.smtp, { host: 'smtp.hostinger.com', port: 465, user: 'info@xtratickets.com', password: 'pw', from: 'no-reply@xtratickets.com', ssl: true, starttls: false });
+    vi.stubGlobal('fetch', async () => { throw new Error('Resend must not be called'); });
+    expect(await send({ channel: 'email', to: 'nour@example.com', kind: 'test', subject: 'Hi', body: 'Hello' })).toBe(true);
+    expect(mail.opts).toMatchObject({ host: 'smtp.hostinger.com', port: 465, secure: true, auth: { user: 'info@xtratickets.com', pass: 'pw' } });
+    expect(mail.sent[0]).toMatchObject({ from: 'XTRA <no-reply@xtratickets.com>', to: 'nour@example.com', subject: 'Hi', text: 'Hello' });
   });
 });

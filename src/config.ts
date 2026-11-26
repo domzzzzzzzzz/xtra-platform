@@ -15,7 +15,17 @@ export const config = {
     integrationIds: (env.PAYMOB_INTEGRATION_IDS ?? '').split(',').map((s) => s.trim()).filter(Boolean).map(Number),
   },
   whatsapp: { token: env.WHATSAPP_TOKEN ?? '', phoneNumberId: env.WHATSAPP_PHONE_NUMBER_ID ?? '', language: env.WHATSAPP_TEMPLATE_LANGUAGE || 'en' },
-  email: { resendKey: env.RESEND_API_KEY ?? '', from: env.EMAIL_FROM ?? 'XTRA <no-reply@xtra.eg>' },
+  email: { resendKey: env.RESEND_API_KEY ?? '', from: env.EMAIL_FROM || 'XTRA <no-reply@xtra.eg>' },
+  /** SMTP (e.g. Hostinger). Used for email when host, username and password are all set; it wins over Resend. */
+  smtp: {
+    host: env.MAIL_HOST ?? '',
+    port: Number(env.MAIL_PORT || 465),
+    user: env.MAIL_USERNAME ?? '',
+    password: env.MAIL_PASSWORD ?? '',
+    from: env.MAIL_FROM ?? '',
+    ssl: (env.MAIL_SSL_ENABLE ?? 'true').toLowerCase() !== 'false',
+    starttls: (env.MAIL_STARTTLS_ENABLE ?? 'false').toLowerCase() === 'true',
+  },
   googleWallet: {
     issuerId: env.GOOGLE_WALLET_ISSUER_ID ?? '',
     serviceAccountEmail: env.GOOGLE_WALLET_SERVICE_ACCOUNT_EMAIL ?? '',

@@ -4,6 +4,7 @@
  * the system works end to end in development.
  */
 import { db, schema } from '../db/index.js';
+import nodemailer, { type Transporter } from 'nodemailer';
 import { config } from '../config.js';
 
 export type Outgoing = {
@@ -58,7 +59,27 @@ async function sendWhatsApp(m: Outgoing): Promise<{ status: string; providerId?:
   return { status: 'sent', providerId: data.messages?.[0]?.id };
 }
 
+export const smtpReady = () => Boolean(config.smtp.host && config.smtp.user && config.smtp.password);
+export const emailReady = () => smtpReady() || Boolean(config.email.resendKey);
+
+/** "no-reply@x.com" becomes "XTRA <no-reply@x.com>"; a value with a name is kept. */
+const fromHeader = (v: string) => (v.includes('<') ? v : `XTRA <${v}>`);
+
+let smtp: Transporter | null = null;
+const smtpTransport = () => smtp ??= nodemailer.createTransport({
+  host: config.smtp.host, port: config.smtp.port,
+  secure: config.smtp.ssl, requireTLS: config.smtp.starttls,
+  auth: { user: config.smtp.user, pass: config.smtp.password },
+  connectionTimeout: 15_000,
+});
+
 async function sendEmail(m: Outgoing): Promise<{ status: string; providerId?: string }> {
+  if (smtpReady()) {
+    const info = await smtpTransport().sendMail({
+      from: fromHeader(config.smtp.from || config.smtp.user), to: m.to, subject: m.subject ?? 'XTRA', text: m.body,
+    });
+    return { status: 'sent', providerId: info.messageId };
+  }
   if (!config.email.resendKey) return { status: 'logged' };
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
