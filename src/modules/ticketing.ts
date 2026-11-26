@@ -7,6 +7,7 @@ import { badRequest, conflict, notFound } from '../lib/errors.js';
 import { normalizePhone, promoCode, slugify } from '../lib/codes.js';
 import { config } from '../config.js';
 import { startPayment } from './payments.js';
+import { imageRef } from './media.js';
 import {
   availability, applyPromo, checkoutInput, feeRatesFor, hold, holdInput, onTicketsPaid, orderByCode, prepareCheckout,
 } from './ticketing-service.js';
@@ -17,7 +18,7 @@ type PE = P & { eventId: string };
 const eventBody = z.object({
   title: z.string().min(2).max(120),
   slug: z.string().optional(),
-  posterUrl: z.string().url().nullable().optional(),
+  posterUrl: imageRef.nullable().optional(),
   description: z.string().max(5000).default(''),
   lineup: z.string().max(200).default(''),
   color: z.string().max(20).nullable().optional(),
@@ -308,7 +309,7 @@ export default async function ticketing(app: FastifyInstance) {
     const priced = map.zones.filter((z) => z.kind !== 'decor');
     return {
       event: { id: e.id, title: e.title, posterUrl: e.posterUrl, description: e.description, lineup: e.lineup, color: e.color, seatMap: e.seatMap, rules: e.rules, startsAt: e.startsAt, endsAt: e.endsAt, maxPerOrder: e.maxPerOrder },
-      venue: { name: v.name, slug: v.slug, logoUrl: v.logoUrl, address: v.address, mapUrl: v.mapUrl, instagram: v.instagram, tiktok: v.tiktok, where: v.settings.where ?? v.address ?? '', color: v.settings.color ?? null, timezone: v.timezone },
+      venue: { name: v.name, slug: v.slug, logoUrl: v.logoUrl, address: v.address, mapUrl: v.mapUrl, lat: v.mapLat, lng: v.mapLng, photoUrl: v.photoUrl, instagram: v.instagram, tiktok: v.tiktok, where: v.settings.where ?? v.address ?? '', color: v.settings.color ?? null, timezone: v.timezone },
       priceFrom: priced.length ? Math.min(...priced.map((z) => z.price)) : 0,
       fees: rates,
       holdMinutes: config.holdMinutes,

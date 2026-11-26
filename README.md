@@ -96,3 +96,9 @@ All under `/api`. Staff send `Authorization: Bearer <token>` from `/auth/login`.
 - Apple Wallet `.pkpass` signing once the Apple certificate exists.
 - Paymob split payouts to each venue's sub-account.
 - Hosting (e.g. Railway / Render / AWS Bahrain) and a real domain for guest links.
+
+## Images and location
+
+- Venues upload images from the staff app (event cover on the event screen, venue photo in Venue setup). The browser shrinks them, then `POST /api/venues/:venueId/media` stores them in Postgres (`media` table, 3 MB max, JPG/PNG/WebP). They are served at `/media/:id` with a long cache.
+- Paste a Google Maps link in Venue setup → Location. The server reads the pin from it (short `maps.app.goo.gl` links are followed) and guest pages show a map with a Directions button.
+- Guest pages are phone first; on tablet and desktop the ticket page and booking page switch to a wide layout.

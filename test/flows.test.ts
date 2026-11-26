@@ -382,3 +382,21 @@ describe('XTRA admin: features and roles', () => {
     expect((await api.get(`${v()}/events`)).status).toBe(200);
   });
 });
+
+describe('Venue images and location', () => {
+  const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  it('uploads a photo, reads a pin from a Maps link and shows both to guests', async () => {
+    api.setToken(ownerToken);
+    expect((await api.post(`${v()}/media`, { data: 'data:text/html;base64,PGgxPg==' })).status).toBe(400);
+    const up = await api.post(`${v()}/media`, { data: png });
+    expect(up.status).toBe(201);
+    const img = await app.inject({ method: 'GET', url: up.body.url });
+    expect(img.headers['content-type']).toBe('image/png');
+    expect(img.rawPayload.length).toBeGreaterThan(50);
+    const p = await api.patch(v(), { photoUrl: up.body.url, mapUrl: 'https://www.google.com/maps/place/Lumen/@30.0271,31.4913,17z' });
+    expect(p.body).toMatchObject({ mapLat: 30.0271, mapLng: 31.4913, photoUrl: up.body.url });
+    const pub = await api.get('/api/public/venues/lumen-rooftop');
+    expect(pub.body.venue).toMatchObject({ lat: 30.0271, lng: 31.4913, photoUrl: up.body.url });
+    expect((await api.patch(v(), { photoUrl: 'javascript:alert(1)' })).status).toBe(400);
+  });
+});

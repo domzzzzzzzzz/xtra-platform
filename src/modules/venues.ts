@@ -7,6 +7,7 @@ import { byNight } from '../lib/dates.js';
 import { parse, venueAccess, MANAGERS } from '../lib/http.js';
 import { badRequest, conflict, notFound } from '../lib/errors.js';
 import { PERMS, PRESETS } from '../lib/access.js';
+import { imageRef, pinFromMapUrl } from './media.js';
 
 type P = { venueId: string };
 
@@ -64,7 +65,7 @@ export default async function venues(app: FastifyInstance) {
   app.patch<{ Params: P }>('/venues/:venueId', async (req) => {
     await venueAccess(req, req.params.venueId, MANAGERS);
     const b = parse(z.object({
-      name: z.string().min(2), logoUrl: z.string().url().nullable(), phone: z.string().nullable(), email: z.string().email().nullable(),
+      name: z.string().min(2), logoUrl: imageRef.nullable(), photoUrl: imageRef.nullable(), phone: z.string().nullable(), email: z.string().email().nullable(),
       address: z.string().nullable(), mapUrl: z.string().url().nullable(), instagram: z.string().nullable(), tiktok: z.string().nullable(),
       notifyChannel: z.enum(schema.notifyChannel.enumValues),
       serviceBps: z.number().int().min(0).max(3000), vatBps: z.number().int().min(0).max(3000),
@@ -72,6 +73,8 @@ export default async function venues(app: FastifyInstance) {
       settings: settingsBody,
     }).partial(), req.body);
     const { settings, ...rest } = b;
+    const pin = b.mapUrl !== undefined ? (b.mapUrl ? await pinFromMapUrl(b.mapUrl) : null) : undefined;
+    if (pin !== undefined) Object.assign(rest, { mapLat: pin?.lat ?? null, mapLng: pin?.lng ?? null });
     const [cur] = await db.select({ settings: schema.venues.settings }).from(schema.venues).where(eq(schema.venues.id, req.params.venueId));
     const [v] = await db.update(schema.venues).set({ ...rest, ...(settings ? { settings: { ...cur?.settings, ...settings } } : {}) })
       .where(eq(schema.venues.id, req.params.venueId)).returning();
