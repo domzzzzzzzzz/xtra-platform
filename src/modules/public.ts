@@ -7,7 +7,7 @@ import { guestUser, parse } from '../lib/http.js';
 import { conflict, notFound } from '../lib/errors.js';
 import { byNight, nightOf, weekdayOf } from '../lib/dates.js';
 import { qrPng } from '../integrations/qr.js';
-import { googleWalletUrl, applePass } from '../integrations/wallet.js';
+import { googleWalletUrl, applePass, applePkpass, appleWalletReady, type PassInfo } from '../integrations/wallet.js';
 import { config } from '../config.js';
 import { acceptReservation, bookingInput, createBooking, statusUrl } from './reservations.js';
 import { startPayment } from './payments.js';
@@ -118,18 +118,17 @@ export default async function publicRoutes(app: FastifyInstance) {
     });
   });
 
-  /* A single pass (booking guest) or ticket, by its QR token. */
-  app.get<{ Params: { token: string } }>('/public/pass/:token', async (req) => {
-    const token = req.params.token;
+  /** A booking guest's pass or a ticket, by its QR token, with what the wallets need. */
+  async function passByToken(token: string) {
     const [rg] = await db.select({ p: schema.reservationGuests, r: schema.reservations, v: schema.venues }).from(schema.reservationGuests)
       .innerJoin(schema.reservations, eq(schema.reservations.id, schema.reservationGuests.reservationId))
       .innerJoin(schema.venues, eq(schema.venues.id, schema.reservations.venueId)).where(eq(schema.reservationGuests.qrToken, token));
     if (rg && ['confirmed', 'arrived', 'completed'].includes(rg.r.status)) {
-      const info = { id: rg.p.id, qrToken: token, title: rg.v.name, subtitle: `${rg.r.partySize} people`, holder: rg.p.name, startsAt: new Date(`${rg.r.date}T20:00:00+02:00`), venueName: rg.v.name };
-      return {
-        type: 'booking', name: rg.p.name, venue: rg.v.name, date: rg.r.date, time: rg.r.slotLabel, used: Boolean(rg.p.checkedInAt),
-        qrImage: `${config.publicAppUrl}/public/qr/${token}.png`, googleWalletUrl: googleWalletUrl(info), appleWallet: applePass(info),
+      const info: PassInfo = {
+        id: rg.p.id, qrToken: token, kind: 'booking', groupId: rg.v.id, title: rg.v.name, subtitle: `${rg.r.partySize} people · ${rg.r.slotLabel ?? ''}`.replace(/ · $/, ''),
+        holder: rg.p.name, startsAt: new Date(`${rg.r.date}T20:00:00+02:00`), venueName: rg.v.name, address: rg.v.address, lat: rg.v.mapLat, lng: rg.v.mapLng, color: rg.v.settings.color,
       };
+      return { info, view: { type: 'booking', name: rg.p.name, venue: rg.v.name, date: rg.r.date, time: rg.r.slotLabel, used: Boolean(rg.p.checkedInAt) } };
     }
     const [t] = await db.select({ t: schema.tickets, o: schema.ticketOrders, e: schema.events, z: schema.eventZones, s: schema.eventSeats, v: schema.venues }).from(schema.tickets)
       .innerJoin(schema.ticketOrders, eq(schema.ticketOrders.id, schema.tickets.orderId))
@@ -140,14 +139,26 @@ export default async function publicRoutes(app: FastifyInstance) {
       .where(eq(schema.tickets.qrToken, token));
     if (t && t.o.status === 'paid') {
       const holder = `${t.t.firstName} ${t.t.lastName}`.trim();
-      const info = { id: t.t.id, qrToken: token, title: t.e.title, subtitle: t.s ? `${t.z.name} · ${t.s.label}` : t.z.name, holder, startsAt: t.e.startsAt, venueName: t.v.name };
-      return {
-        type: 'ticket', name: holder, event: t.e.title, posterUrl: t.e.posterUrl, venue: t.v.name, startsAt: t.e.startsAt,
-        ticketType: t.z.name, seat: t.s?.label ?? null, used: Boolean(t.t.checkedInAt),
-        qrImage: `${config.publicAppUrl}/public/qr/${token}.png`, googleWalletUrl: googleWalletUrl(info), appleWallet: applePass(info),
+      const info: PassInfo = {
+        id: t.t.id, qrToken: token, kind: 'ticket', groupId: t.e.id, title: t.e.title, subtitle: t.s ? `${t.z.name} · ${t.s.label}` : t.z.name, holder,
+        startsAt: t.e.startsAt, venueName: t.v.name, address: t.v.address, lat: t.v.mapLat, lng: t.v.mapLng, color: t.e.color ?? t.v.settings.color,
       };
+      return { info, view: { type: 'ticket', name: holder, event: t.e.title, posterUrl: t.e.posterUrl, venue: t.v.name, startsAt: t.e.startsAt, ticketType: t.z.name, seat: t.s?.label ?? null, used: Boolean(t.t.checkedInAt) } };
     }
     throw notFound('Pass not found');
+  }
+
+  app.get<{ Params: { token: string } }>('/public/pass/:token', async (req) => {
+    const { info, view } = await passByToken(req.params.token);
+    return { ...view, qrImage: `${config.publicAppUrl}/public/qr/${req.params.token}.png`, googleWalletUrl: googleWalletUrl(info), appleWallet: applePass(info) };
+  });
+
+  /** The signed Apple Wallet pass. */
+  app.get<{ Params: { token: string } }>('/public/pass/:token/apple.pkpass', async (req, reply) => {
+    if (!appleWalletReady()) throw notFound('Apple Wallet is not set up yet');
+    const { info } = await passByToken(req.params.token);
+    const buf = await applePkpass(info);
+    return reply.type('application/vnd.apple.pkpass').header('Content-Disposition', `attachment; filename="${info.kind}.pkpass"`).header('Cache-Control', 'no-store').send(buf);
   });
 
   app.get<{ Params: { token: string } }>('/public/qr/:token.png', async (req, reply) => {

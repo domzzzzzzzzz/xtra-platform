@@ -102,3 +102,21 @@ All under `/api`. Staff send `Authorization: Bearer <token>` from `/auth/login`.
 - Venues upload images from the staff app (event cover on the event screen, venue photo in Venue setup). The browser shrinks them, then `POST /api/venues/:venueId/media` stores them in Postgres (`media` table, 3 MB max, JPG/PNG/WebP). They are served at `/media/:id` with a long cache.
 - Paste a Google Maps link in Venue setup → Location. The server reads the pin from it (short `maps.app.goo.gl` links are followed) and guest pages show a map with a Directions button.
 - Guest pages are phone first; on tablet and desktop the ticket page and booking page switch to a wide layout.
+
+## Wallet passes
+
+Both wallets are built and switch on by themselves once their env vars are set. Until then guests get their QR by WhatsApp/email and on the pass page.
+
+- **Apple Wallet** (needs an Apple Developer account, 99 USD a year): create a Pass Type ID (e.g. `pass.com.xtratickets.hospitality`), make its certificate, export it, and set
+  `APPLE_PASS_TYPE_ID`, `APPLE_TEAM_ID`, `APPLE_PASS_CERT` (PEM), `APPLE_PASS_KEY` (PEM), `APPLE_PASS_KEY_PASSPHRASE` (if any) and `APPLE_WWDR_CERT` (Apple WWDR G4, PEM). PEM values can use `\n` for new lines.
+  Guests download `GET /api/public/pass/:token/apple.pkpass`.
+- **Google Wallet**: in the Google Pay & Wallet Console get an Issuer ID, create a Google Cloud service account with the Wallet API enabled, add it as a user of the issuer, and set
+  `GOOGLE_WALLET_ISSUER_ID`, `GOOGLE_WALLET_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_WALLET_PRIVATE_KEY`. The save link carries the pass class, so nothing else needs creating.
+
+## Reports
+
+`GET /api/venues/:venueId/reports?from=YYYY-MM-DD&to=YYYY-MM-DD` (default: last 30 nights; a night runs until 6 AM Cairo time). Needs the `reports` permission (owners and managers have it). Money in per night, payment methods, deposits, bookings and no-shows, covers, top guests, best sellers and ticket sales per event. The staff app's Reports screen also downloads a CSV.
+
+## Policies
+
+`/terms`, `/privacy` and `/refunds` are linked from the booking, ticket and checkout pages. Set `LEGAL_COMPANY_NAME`, `LEGAL_ADDRESS`, `SUPPORT_EMAIL` and `SUPPORT_PHONE` so they show your company and contact details. Have a lawyer review them.
