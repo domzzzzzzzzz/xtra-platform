@@ -9,6 +9,8 @@
  *   what a venue knows about a guest lives in venue_guests.
  */
 import {
+  customType,
+  doublePrecision,
   pgTable, pgEnum, uuid, text, integer, boolean, timestamp, jsonb, date, real,
   uniqueIndex, index, primaryKey,
 } from 'drizzle-orm/pg-core';
@@ -61,6 +63,11 @@ export const venues = pgTable('venues', {
   email: text('email'),
   address: text('address'),
   mapUrl: text('map_url'),
+  /** Pin read from mapUrl, used for the map on guest pages. */
+  mapLat: doublePrecision('map_lat'),
+  mapLng: doublePrecision('map_lng'),
+  /** Photo shown on the Location card of guest pages. */
+  photoUrl: text('photo_url'),
   instagram: text('instagram'),
   tiktok: text('tiktok'),
   timezone: text('timezone').notNull().default('Africa/Cairo'),
@@ -530,3 +537,16 @@ export const messages = pgTable('messages', {
   error: text('error'),
   createdAt: createdAt(),
 }, (t) => [index('messages_venue_idx').on(t.venueId)]);
+
+/* ---------------------------------------------------------------- media */
+
+const bytea = customType<{ data: Buffer }>({ dataType: () => 'bytea' });
+
+/** Images venues upload (event posters, location photos), served at /media/:id. */
+export const media = pgTable('media', {
+  id: id(),
+  venueId: venueRef(),
+  mime: text('mime').notNull(),
+  bytes: bytea('bytes').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});

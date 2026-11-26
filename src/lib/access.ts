@@ -39,6 +39,7 @@ const RULES: [method: string, test: RegExp, rule: Rule][] = [
   ['GET', /^$/, ANY],
   ['*', /^$/, { any: ['setup'] }],
   ['*', /^\/(staff|roles)(\/|$)/, { any: ['staff'] }],
+  ['POST', /^\/media$/, { any: ['setup', 'events', 'editor'] }],
   ['GET', /^\/floor$/, ANY],
   ['*', /^\/floor(\/|$)/, { any: ['editor'] }],
   ['GET', /^\/slots$/, ANY],
