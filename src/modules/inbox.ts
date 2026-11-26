@@ -93,10 +93,12 @@ export async function whatsappWebhook(app: FastifyInstance) {
     if (!config.whatsapp.appSecret) return reply.code(503).send({ error: 'not_configured' });
     const want = 'sha256=' + crypto.createHmac('sha256', config.whatsapp.appSecret).update(raw).digest('hex');
     if (sig.length !== want.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(want))) return reply.code(401).send({ error: 'bad_signature' });
-    const data = JSON.parse(raw.toString('utf8')) as { entry?: { changes?: { value?: { statuses?: Status[]; messages?: Inbound[]; contacts?: { wa_id: string; profile?: { name?: string } }[] } }[] }[] };
+    const data = JSON.parse(raw.toString('utf8')) as { entry?: { changes?: { value?: { metadata?: { phone_number_id?: string }; statuses?: Status[]; messages?: Inbound[]; contacts?: { wa_id: string; profile?: { name?: string } }[] } }[] }[] };
     for (const e of data.entry ?? []) {
       for (const c of e.changes ?? []) {
         const v = c.value ?? {};
+        // The WhatsApp account also holds other numbers; only take events for ours.
+        if (v.metadata?.phone_number_id !== config.whatsapp.phoneNumberId) continue;
         for (const s of v.statuses ?? []) await applyStatus(s);
         for (const m of v.messages ?? []) await applyInbound(m, v.contacts?.find((x) => x.wa_id === m.from)?.profile?.name);
       }

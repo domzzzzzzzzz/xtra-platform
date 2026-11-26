@@ -20,11 +20,12 @@ const hook = (body: unknown, secret = 'app-secret') => {
   const sig = 'sha256=' + crypto.createHmac('sha256', secret).update(raw).digest('hex');
   return app.inject({ method: 'POST', url: '/webhooks/whatsapp', payload: raw, headers: { 'content-type': 'application/json', 'x-hub-signature-256': sig } });
 };
-const wrap = (value: unknown) => ({ entry: [{ changes: [{ value }] }] });
+const wrap = (value: object, phoneNumberId = 'PNID-OURS') => ({ entry: [{ changes: [{ value: { metadata: { phone_number_id: phoneNumberId }, ...value } }] }] });
 
 beforeAll(async () => {
   config.whatsapp.verifyToken = 'verify-me';
   config.whatsapp.appSecret = 'app-secret';
+  config.whatsapp.phoneNumberId = 'PNID-OURS';
   app = await freshApp();
   api = client(app);
   await api.login('admin@xtra.eg', 'admin1234');
@@ -33,7 +34,7 @@ beforeAll(async () => {
   await db.insert(schema.guests).values({ phone: PHONE, firstName: 'Nour', lastName: 'Hassan', referralCode: 'NOUR01', whatsappOptIn: true });
   await api.login('owner@lumen.eg', 'password1');
 });
-afterAll(async () => { config.whatsapp.verifyToken = ''; config.whatsapp.appSecret = ''; await app.close(); });
+afterAll(async () => { config.whatsapp.verifyToken = ''; config.whatsapp.appSecret = ''; config.whatsapp.phoneNumberId = ''; await app.close(); });
 
 describe('WhatsApp webhook and inbox', () => {
   it('answers Meta\'s verify call only with the right word', async () => {
@@ -45,6 +46,12 @@ describe('WhatsApp webhook and inbox', () => {
 
   it('rejects calls that are not signed by Meta', async () => {
     expect((await hook(wrap({ messages: [] }), 'wrong')).statusCode).toBe(401);
+  });
+
+  it('ignores events for the other numbers on the same WhatsApp account', async () => {
+    await hook(wrap({ messages: [{ id: 'wamid.OTHER1', from: '201001112299', timestamp: '1764190000', type: 'text', text: { body: 'hello other brand' } }] }, 'PNID-SOMEONE-ELSE'));
+    const rows = await db.select().from(schema.messages).where(eq(schema.messages.providerId, 'wamid.OTHER1'));
+    expect(rows).toHaveLength(0);
   });
 
   it('marks our messages delivered, then read, never back', async () => {

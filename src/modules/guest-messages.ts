@@ -99,7 +99,7 @@ export function bookingDeclined(v: VenueLike & { slug: string }, g: Person, r: R
   const date = prettyDate(r.date);
   return {
     kind: 'booking_declined', subject: `About your booking · ${v.name} · ${date}`,
-    body: `Hi ${g.firstName}, we are sorry, ${v.name} cannot take your booking for ${date}.${reason ? ` ${reason}` : ''} We would love to host you another night: ${app()}/${bookPath(v.slug)}`,
+    body: `Hi ${g.firstName}, we are sorry, ${v.name} cannot take your booking for ${date}.${reason ? ` ${reason}` : ''} You can choose another date here: ${app()}/${bookPath(v.slug)}`,
     wa: { name: 'xtra_booking_declined', header: v.name, params: [g.firstName, date], button: bookPath(v.slug) },
     mail: { venue: v, doc: {
       preheader: `We could not take your booking for ${date}.`, title: 'We could not take this booking.',
@@ -132,7 +132,7 @@ export function bookingPass(v: VenueLike, p: { name: string; qrToken: string }, 
   const first = p.name.split(' ')[0] || p.name;
   return {
     kind: 'booking_pass', subject: `Your pass · ${v.name} · ${date}`,
-    body: `Hi ${first}, you are on the guest list at ${v.name} for ${date} at ${time}. Show your pass at the door: ${url}`,
+    body: `Hi ${first}, you are on the guest list at ${v.name} for ${date} at ${time}. Your entry pass is ready, please show it at the door: ${url}`,
     wa: { name: 'xtra_booking_pass', header: v.name, params: [first, date, time], button: `p/${p.qrToken}` },
     mail: { venue: v, doc: {
       preheader: `${date} at ${time}. Show this QR at the door.`, title: `You're on the list, ${first}.`,
@@ -148,7 +148,7 @@ export function bookingReminder(v: VenueLike, g: Person, r: Res, passToken: stri
   const time = prettyTime(r.slotLabel), url = `${app()}/p/${passToken}`;
   return {
     kind: 'booking_reminder', subject: `See you tonight · ${v.name} · ${time}`,
-    body: `Hi ${g.firstName}, see you tonight at ${v.name} at ${time}. Have your pass ready at the door: ${url}`,
+    body: `Hi ${g.firstName}, this is a reminder of your booking tonight at ${v.name} at ${time}. Please have your entry pass ready at the door: ${url}`,
     wa: { name: 'xtra_booking_reminder', header: v.name, params: [g.firstName, time], button: `p/${passToken}` },
     mail: { venue: v, doc: {
       preheader: `Tonight at ${time}. Your pass is inside.`, title: `See you tonight, ${g.firstName}.`,
