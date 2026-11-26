@@ -45,7 +45,8 @@ export default async function auth(app: FastifyInstance) {
     const phone = normalizePhone(b.phone);
     const code = otpCode();
     await db.insert(schema.guestOtps).values({ phone, codeHash: sha256(`${phone}:${code}`), expiresAt: new Date(Date.now() + 10 * 60_000) });
-    await send({ channel: 'whatsapp', to: phone, kind: 'otp', body: `Your XTRA code is ${code}. It expires in 10 minutes.` });
+    await send({ channel: 'whatsapp', to: phone, kind: 'otp', body: `Your XTRA code is ${code}. It expires in 10 minutes.`,
+      whatsappTemplate: { name: 'xtra_login_code', params: [code], button: code } });
     // Until WhatsApp is connected the code cannot reach the guest, so it is
     // returned to the page (test mode only, never once WHATSAPP_TOKEN is set).
     const testMode = process.env.NODE_ENV === 'test' || !config.whatsapp.token;

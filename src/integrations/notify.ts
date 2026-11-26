@@ -16,8 +16,17 @@ export type Outgoing = {
   guestId?: string | null;
   campaignId?: string | null;
   /** Meta-approved template. Needed for WhatsApp outside the 24h window. */
-  whatsappTemplate?: { name: string; params: string[]; language?: string } | null;
+  whatsappTemplate?: WaTemplate | null;
 };
+
+/**
+ * A Meta-approved WhatsApp template. `button` fills the {{1}} at the end of the
+ * template's URL button (the path after the app URL, e.g. "b/AB12CD").
+ */
+export type WaTemplate = { name: string; params: string[]; button?: string; language?: string };
+
+/** Path for a template's URL button: the link with the app URL taken off. */
+export const waPath = (url: string) => url.replace(`${config.publicAppUrl}/`, '');
 
 async function sendWhatsApp(m: Outgoing): Promise<{ status: string; providerId?: string }> {
   if (!config.whatsapp.token) return { status: 'logged' };
@@ -25,10 +34,17 @@ async function sendWhatsApp(m: Outgoing): Promise<{ status: string; providerId?:
   const payload = m.whatsappTemplate
     ? {
         messaging_product: 'whatsapp', to, type: 'template',
-        template: {
+        template: m.whatsappTemplate.params.length === 0 && m.whatsappTemplate.button == null
+          ? { name: m.whatsappTemplate.name, language: { code: m.whatsappTemplate.language ?? config.whatsapp.language } }
+          : {
           name: m.whatsappTemplate.name,
-          language: { code: m.whatsappTemplate.language ?? 'en' },
-          components: [{ type: 'body', parameters: m.whatsappTemplate.params.map((text) => ({ type: 'text', text })) }],
+          language: { code: m.whatsappTemplate.language ?? config.whatsapp.language },
+          components: [
+            { type: 'body', parameters: m.whatsappTemplate.params.map((text) => ({ type: 'text', text: text.trim() || '-' })) },
+            ...(m.whatsappTemplate.button != null
+              ? [{ type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: m.whatsappTemplate.button }] }]
+              : []),
+          ],
         },
       }
     : { messaging_product: 'whatsapp', to, type: 'text', text: { body: m.body, preview_url: true } };
@@ -83,10 +99,12 @@ export async function notifyGuest(opts: {
   body: string;
   venueId?: string;
   guestId?: string;
+  /** The approved template for WhatsApp. Business-started chats must use one. */
+  wa?: WaTemplate;
 }) {
   const jobs: Promise<boolean>[] = [];
   if ((opts.channel === 'whatsapp' || opts.channel === 'both') && opts.phone) {
-    jobs.push(send({ channel: 'whatsapp', to: opts.phone, kind: opts.kind, body: opts.body, venueId: opts.venueId, guestId: opts.guestId }));
+    jobs.push(send({ channel: 'whatsapp', to: opts.phone, kind: opts.kind, body: opts.body, venueId: opts.venueId, guestId: opts.guestId, whatsappTemplate: opts.wa ?? null }));
   }
   if ((opts.channel === 'email' || opts.channel === 'both') && opts.email) {
     jobs.push(send({ channel: 'email', to: opts.email, kind: opts.kind, subject: opts.subject, body: opts.body, venueId: opts.venueId, guestId: opts.guestId }));

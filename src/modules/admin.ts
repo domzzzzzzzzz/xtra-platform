@@ -1,15 +1,16 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
-import { eq, asc } from 'drizzle-orm';
+import { eq, asc, desc } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { parse, staffUser, superAdmin } from '../lib/http.js';
 import { config } from '../config.js';
 import { appleWalletReady, googleWalletReady } from '../integrations/wallet.js';
 import { paymobEnabled } from '../integrations/paymob.js';
 import { slugify } from '../lib/codes.js';
-import { conflict, notFound } from '../lib/errors.js';
+import { conflict, notFound, badRequest } from '../lib/errors.js';
 import { FEATURES } from '../lib/access.js';
+import { send } from '../integrations/notify.js';
 
 export async function getPlatformSettings() {
   const [s] = await db.select().from(schema.platformSettings).where(eq(schema.platformSettings.id, 1));
@@ -98,5 +99,27 @@ export default async function admin(app: FastifyInstance) {
     });
     reply.code(201);
     return result;
+  });
+
+  /*
+   * Test a live channel. WhatsApp sends a chosen template ("hello_world" is
+   * Meta's ready-made one, en_US) so it works before XTRA's templates are approved.
+   */
+  app.post('/admin/test-message', async (req) => {
+    await superAdmin(req);
+    const b = parse(z.object({
+      channel: z.enum(['whatsapp', 'email']), to: z.string().min(5),
+      template: z.string().optional(), params: z.array(z.string()).default([]), button: z.string().optional(), language: z.string().optional(),
+    }), req.body);
+    if (b.channel === 'whatsapp' && !/^\+?\d{8,15}$/.test(b.to)) throw badRequest('Use a full phone number, like +201001234567');
+    const tpl = b.template ?? (b.channel === 'whatsapp' ? 'hello_world' : undefined);
+    const ok = await send({
+      channel: b.channel, to: b.to, kind: 'test', subject: 'XTRA test email',
+      body: 'This is a test message from XTRA. If you can read it, email is working.',
+      whatsappTemplate: tpl ? { name: tpl, params: b.params, button: b.button, language: b.language ?? (tpl === 'hello_world' ? 'en_US' : undefined) } : null,
+    });
+    const [m] = await db.select({ status: schema.messages.status, error: schema.messages.error }).from(schema.messages)
+      .where(eq(schema.messages.kind, 'test')).orderBy(desc(schema.messages.createdAt)).limit(1);
+    return { ok, status: m?.status, error: m?.error ?? null };
   });
 }

@@ -14,7 +14,7 @@ export const config = {
     hmacSecret: env.PAYMOB_HMAC_SECRET ?? '',
     integrationIds: (env.PAYMOB_INTEGRATION_IDS ?? '').split(',').map((s) => s.trim()).filter(Boolean).map(Number),
   },
-  whatsapp: { token: env.WHATSAPP_TOKEN ?? '', phoneNumberId: env.WHATSAPP_PHONE_NUMBER_ID ?? '' },
+  whatsapp: { token: env.WHATSAPP_TOKEN ?? '', phoneNumberId: env.WHATSAPP_PHONE_NUMBER_ID ?? '', language: env.WHATSAPP_TEMPLATE_LANGUAGE || 'en' },
   email: { resendKey: env.RESEND_API_KEY ?? '', from: env.EMAIL_FROM ?? 'XTRA <no-reply@xtra.eg>' },
   googleWallet: {
     issuerId: env.GOOGLE_WALLET_ISSUER_ID ?? '',

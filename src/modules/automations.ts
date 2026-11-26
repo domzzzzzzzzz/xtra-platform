@@ -62,6 +62,7 @@ export async function runAutomations(now = new Date()) {
           channel: ch, phone: g.phone, email: g.email, kind, venueId: v.id, guestId: g.id,
           subject: `Tonight at ${v.name}`,
           body: `Hi ${g.firstName}, see you tonight at ${v.name} at ${r.slotLabel.split(' ')[0]}. Your pass: ${config.publicAppUrl}/p/${p?.t ?? ''}`,
+          wa: { name: 'xtra_booking_reminder', params: [g.firstName, v.name, r.slotLabel.split(' ')[0]], button: `p/${p?.t ?? ''}` },
         });
         sent++;
       }
@@ -79,6 +80,7 @@ export async function runAutomations(now = new Date()) {
           channel: ch, phone: g.phone, email: g.email, kind, venueId: v.id, guestId: g.id,
           subject: `Thank you from ${v.name}`,
           body: `Hi ${g.firstName}, thank you for coming to ${v.name} last night. We hope to see you again soon: ${config.publicAppUrl}/book/${v.slug}`,
+          wa: { name: 'xtra_visit_thanks', params: [g.firstName, v.name], button: `book/${v.slug}` },
         });
         sent++;
       }
@@ -95,7 +97,8 @@ export async function runAutomations(now = new Date()) {
           const kind = `auto:bday:${v.id}:${g.id}:${now.getUTCFullYear()}`;
           if (!(await alreadySent(kind))) {
             await notifyGuest({ channel: 'whatsapp', phone: g.phone, kind, venueId: v.id, guestId: g.id, subject: '',
-              body: `Hi ${g.firstName}, your birthday is coming up. Celebrate it at ${v.name}, book your table: ${config.publicAppUrl}/book/${v.slug}\nReply STOP to opt out` });
+              body: `Hi ${g.firstName}, your birthday is coming up. Celebrate it at ${v.name}, book your table: ${config.publicAppUrl}/book/${v.slug}\nReply STOP to opt out`,
+              wa: { name: 'xtra_birthday', params: [g.firstName, v.name], button: `book/${v.slug}` } });
             sent++;
           }
         }
@@ -105,7 +108,8 @@ export async function runAutomations(now = new Date()) {
             const kind = `auto:winback:${v.id}:${g.id}:${localDate(vg.lastVisitAt)}`;
             if (!(await alreadySent(kind))) {
               await notifyGuest({ channel: 'whatsapp', phone: g.phone, kind, venueId: v.id, guestId: g.id, subject: '',
-                body: `Hi ${g.firstName}, we miss you at ${v.name}. Come back this week: ${config.publicAppUrl}/book/${v.slug}\nReply STOP to opt out` });
+                body: `Hi ${g.firstName}, we miss you at ${v.name}. Come back this week: ${config.publicAppUrl}/book/${v.slug}\nReply STOP to opt out`,
+                wa: { name: 'xtra_winback', params: [g.firstName, v.name], button: `book/${v.slug}` } });
               sent++;
             }
           }
