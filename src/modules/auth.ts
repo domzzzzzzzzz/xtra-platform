@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
-import { and, eq, gt, isNull, desc } from 'drizzle-orm';
+import { and, asc, eq, gt, isNull, desc } from 'drizzle-orm';
+import { permsOf, visiblePerms } from '../lib/access.js';
 import { db, schema } from '../db/index.js';
 import { parse, staffUser } from '../lib/http.js';
 import { AppError } from '../lib/errors.js';
@@ -24,9 +25,17 @@ export default async function auth(app: FastifyInstance) {
     const t = await staffUser(req);
     const [u] = await db.select().from(schema.users).where(eq(schema.users.id, t.sub));
     if (!u) throw new AppError(401, 'unauthorized', 'Please sign in');
-    const venues = await db.select({ id: schema.venues.id, name: schema.venues.name, slug: schema.venues.slug, role: schema.venueStaff.role })
-      .from(schema.venueStaff).innerJoin(schema.venues, eq(schema.venues.id, schema.venueStaff.venueId))
-      .where(eq(schema.venueStaff.userId, u.id));
+    // XTRA admins see every venue; staff see the venues they work at, with what they may open there.
+    const rows = u.isSuperAdmin
+      ? (await db.select().from(schema.venues).orderBy(asc(schema.venues.name))).map((v) => ({ v, role: 'owner' as const, roleId: null, roleName: null, custom: null }))
+      : (await db.select({ v: schema.venues, role: schema.venueStaff.role, roleId: schema.venueStaff.roleId, roleName: schema.venueRoles.name, custom: schema.venueRoles.permissions })
+        .from(schema.venueStaff).innerJoin(schema.venues, eq(schema.venues.id, schema.venueStaff.venueId))
+        .leftJoin(schema.venueRoles, eq(schema.venueRoles.id, schema.venueStaff.roleId))
+        .where(and(eq(schema.venueStaff.userId, u.id), eq(schema.venues.active, true))).orderBy(asc(schema.venues.name)));
+    const venues = rows.map((r) => ({
+      id: r.v.id, name: r.v.name, slug: r.v.slug, active: r.v.active, role: r.role, roleName: r.roleName, features: r.v.features,
+      perms: visiblePerms(permsOf({ role: r.role }, r.roleId ? r.custom : null), r.v.features),
+    }));
     return { user: { id: u.id, name: u.name, email: u.email, isSuperAdmin: u.isSuperAdmin }, venues };
   });
 

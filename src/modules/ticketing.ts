@@ -291,7 +291,7 @@ export default async function ticketing(app: FastifyInstance) {
 
   app.get<{ Params: { slug: string } }>('/public/venues/:slug/events', async (req) => {
     const [v] = await db.select().from(schema.venues).where(and(eq(schema.venues.slug, req.params.slug), eq(schema.venues.active, true)));
-    if (!v) throw notFound('Venue not found');
+    if (!v || !v.features.includes('ticketing')) throw notFound('Venue not found');
     return db.select({ id: schema.events.id, slug: schema.events.slug, title: schema.events.title, posterUrl: schema.events.posterUrl, startsAt: schema.events.startsAt })
       .from(schema.events).where(and(eq(schema.events.venueId, v.id), eq(schema.events.status, 'published'), sql`${schema.events.startsAt} > now() - interval '6 hours'`))
       .orderBy(asc(schema.events.startsAt));
@@ -301,7 +301,7 @@ export default async function ticketing(app: FastifyInstance) {
     const id = parse(z.string().uuid(), req.params.eventId);
     const [row] = await db.select({ e: schema.events, v: schema.venues }).from(schema.events)
       .innerJoin(schema.venues, eq(schema.venues.id, schema.events.venueId)).where(and(eq(schema.events.id, id), eq(schema.events.status, 'published')));
-    if (!row) throw notFound('Event not found');
+    if (!row || !row.v.features.includes('ticketing')) throw notFound('Event not found');
     const { e, v } = row;
     const map = await eventMap(e.id);
     const rates = await feeRatesFor(e.id);
@@ -319,6 +319,8 @@ export default async function ticketing(app: FastifyInstance) {
 
   app.post<{ Params: { eventId: string } }>('/public/events/:eventId/hold', async (req, reply) => {
     const id = parse(z.string().uuid(), req.params.eventId);
+    const [ev] = await db.select({ f: schema.venues.features }).from(schema.events).innerJoin(schema.venues, eq(schema.venues.id, schema.events.venueId)).where(eq(schema.events.id, id));
+    if (!ev || !ev.f.includes('ticketing')) throw notFound('Event not found');
     const order = await hold(id, parse(holdInput, req.body));
     reply.code(201);
     return publicOrder(order);

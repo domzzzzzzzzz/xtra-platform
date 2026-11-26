@@ -332,3 +332,53 @@ describe('live app support', () => {
     expect((await api.get(`${v()}/automations`)).body.bday).toBe(1);
   });
 });
+
+describe('XTRA admin: features and roles', () => {
+  it('a venue role opens exactly the screens it was given', async () => {
+    api.setToken(ownerToken);
+    const role = await api.post(`${v()}/roles`, { name: 'Host', permissions: ['door', 'bookings'] });
+    expect(role.status).toBe(201);
+    const staff = await api.post(`${v()}/staff`, { name: 'Hana Host', email: 'host@lumen.eg', password: 'password1', roleId: role.body.id });
+    expect(staff.body).toMatchObject({ roleName: 'Host', roleId: role.body.id });
+    await api.login('host@lumen.eg', 'password1');
+    const me = await api.get('/api/auth/me');
+    expect(me.body.venues[0]).toMatchObject({ roleName: 'Host', perms: ['bookings', 'door'] });
+    expect((await api.get(`${v()}/reservations`)).status).toBe(200);
+    expect((await api.get(`${v()}/tabs`)).status).toBe(403);
+    expect((await api.put(`${v()}/floor`, { items: [] })).status).toBe(403);
+    expect((await api.get(`${v()}/staff`)).status).toBe(403);
+    api.setToken(ownerToken);
+    // In use: cannot delete until the staff member has another role.
+    expect((await api.del(`${v()}/roles/${role.body.id}`)).status).toBe(409);
+    await api.patch(`${v()}/staff/${staff.body.userId}`, { role: 'door' });
+    expect((await api.del(`${v()}/roles/${role.body.id}`)).body.ok).toBe(true);
+  });
+
+  it('staff managers who are not owners cannot change an owner', async () => {
+    const role = await api.post(`${v()}/roles`, { name: 'Office', permissions: ['staff'] });
+    await api.post(`${v()}/staff`, { name: 'Omar Office', email: 'office@lumen.eg', password: 'password1', roleId: role.body.id });
+    const owner = (await api.get(`${v()}/staff`)).body.find((s: any) => s.email === 'owner@lumen.eg');
+    await api.login('office@lumen.eg', 'password1');
+    expect((await api.patch(`${v()}/staff/${owner.userId}`, { role: 'waiter' })).status).toBe(400);
+    expect((await api.post(`${v()}/staff`, { name: 'X', email: 'x@lumen.eg', password: 'password1', role: 'owner' })).status).toBe(400);
+    api.setToken(ownerToken);
+  });
+
+  it('XTRA switches modules off per venue, for staff and guests', async () => {
+    expect((await api.patch(`/api/admin/venues/${venueId}`, { features: ['reservations'] })).status).toBe(403);
+    await api.login('admin@xtra.eg', 'admin1234');
+    const list = await api.get('/api/admin/venues');
+    expect(list.body.find((x: any) => x.id === venueId).owners[0].email).toBe('owner@lumen.eg');
+    await api.patch(`/api/admin/venues/${venueId}`, { features: ['reservations', 'ordering', 'guests', 'community', 'marketing'] });
+    api.setToken(ownerToken);
+    const ev = await api.get(`${v()}/events`);
+    expect(ev.body.error).toBe('feature_off');
+    expect((await api.get('/api/auth/me')).body.venues[0].perms).not.toContain('events');
+    const [anyEvent] = await db.select().from(schema.events).where(eq(schema.events.venueId, venueId)).limit(1);
+    expect((await api.get(`/api/public/events/${anyEvent.id}`)).status).toBe(404);
+    await api.login('admin@xtra.eg', 'admin1234');
+    await api.patch(`/api/admin/venues/${venueId}`, { features: ['reservations', 'ordering', 'ticketing', 'marketing', 'guests', 'community'] });
+    api.setToken(ownerToken);
+    expect((await api.get(`${v()}/events`)).status).toBe(200);
+  });
+});

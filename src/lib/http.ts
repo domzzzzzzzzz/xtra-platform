@@ -3,6 +3,7 @@ import { z, ZodTypeAny } from 'zod';
 import { and, eq } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { AppError, forbidden } from './errors.js';
+import { PERMS, type Perm, permsOf, ruleFor } from './access.js';
 
 export const parse = <T extends ZodTypeAny>(s: T, data: unknown): z.infer<T> => {
   const r = s.safeParse(data);
@@ -50,15 +51,30 @@ export const FLOOR: Role[] = ['owner', 'manager', 'door', 'waiter'];
 export const DOOR: Role[] = ['owner', 'manager', 'door'];
 export const SERVICE: Role[] = ['owner', 'manager', 'waiter'];
 
-/** Signed-in staff member with one of `roles` at this venue (super admins pass). */
+/**
+ * Signed-in staff member of this venue who may use this route. The route's
+ * rule in lib/access.ts decides (by screen permission and venue feature);
+ * `roles` is only the fallback for a route no rule covers. Super admins pass
+ * every permission but still respect the venue's features.
+ */
 export async function venueAccess(req: FastifyRequest, venueId: string, roles: Role[] = FLOOR) {
   const u = await staffUser(req);
-  if (u.sa) return { user: u, role: 'owner' as Role };
   if (!z.string().uuid().safeParse(venueId).success) throw forbidden();
-  const [row] = await db.select().from(schema.venueStaff)
+  const rule = ruleFor(req.method, req.routeOptions.url ?? '');
+  const [venue] = await db.select({ features: schema.venues.features }).from(schema.venues).where(eq(schema.venues.id, venueId));
+  if (!venue) throw forbidden();
+  if (rule?.feature && !venue.features.includes(rule.feature)) {
+    throw new AppError(403, 'feature_off', 'This venue does not have this feature. Ask XTRA to switch it on.');
+  }
+  if (u.sa) return { user: u, role: 'owner' as Role, perms: [...PERMS] as Perm[] };
+  const [row] = await db.select({ s: schema.venueStaff, custom: schema.venueRoles.permissions }).from(schema.venueStaff)
+    .leftJoin(schema.venueRoles, eq(schema.venueRoles.id, schema.venueStaff.roleId))
     .where(and(eq(schema.venueStaff.venueId, venueId), eq(schema.venueStaff.userId, u.sub)));
-  if (!row || !roles.includes(row.role)) throw forbidden();
-  return { user: u, role: row.role };
+  if (!row) throw forbidden();
+  const perms = permsOf(row.s, row.s.roleId ? row.custom : null);
+  const ok = rule ? rule.any === '*' || rule.any.some((p) => perms.includes(p)) : !row.s.roleId && roles.includes(row.s.role);
+  if (!ok) throw forbidden();
+  return { user: u, role: row.s.role, perms };
 }
 
 export const egp = (piastres: number) =>

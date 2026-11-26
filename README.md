@@ -33,8 +33,15 @@ One page, no build step, served by the same server:
 | `/t/:token`, `/p/:token` | Guests | One ticket or booking pass with its QR |
 | `/me` | Guests | Account, signed in with a WhatsApp code |
 
-Staff screens show what each role may use (owner and manager: everything, door:
-door and bookings, waiter: floor and orders). The QR libraries are vendored in
+Staff screens show what each role may use. Built-in roles: owner and manager
+(everything), door (floor, bookings, door), waiter (floor, orders). A venue can
+also make its own roles and pick exactly which screens they open.
+
+**XTRA admin** (super admins only, in the staff app): create venues with their
+owner account, switch modules on or off per venue (reservations, ordering,
+tickets, marketing, guest list, community), build roles and add accounts.
+Every `/venues/:id/...` route is checked against `src/lib/access.ts` (screen
+permission + venue module), and guest pages of a module that is off return 404. The QR libraries are vendored in
 `web/vendor` (MIT).
 
 Tests need a database called `xtra_test` (`createdb xtra_test`), then `npm test`.
