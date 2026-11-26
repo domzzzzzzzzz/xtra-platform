@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { and, eq, inArray, lt, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, lt, sql } from 'drizzle-orm';
 import { db, schema, type Conn } from '../db/index.js';
 import { badRequest, conflict, notFound } from '../lib/errors.js';
 import { computeTicketTotals } from '../lib/pricing.js';
@@ -52,7 +52,8 @@ export async function availability(c: Conn, eventId: string) {
   };
 }
 
-const ticketsInLine = (z: Zone, qty: number) => (z.kind === 'table' ? z.seatsPerTable : 1) * qty;
+/** A table zone is priced per seat and sold one whole table at a time. */
+const tableSeats = (z: Zone, seat: { seats: number } | null) => (z.kind === 'table' && seat ? Math.max(1, seat.seats) : 1);
 
 export async function feeRatesFor(eventId: string) {
   const [row] = await db.select({ e: schema.events.bookingFeeBps, v: schema.venues.bookingFeeBps }).from(schema.events)
@@ -90,8 +91,9 @@ export async function hold(eventId: string, input: z.infer<typeof holdInput>) {
         if (!seat) throw badRequest('Unknown seat');
         if (seat.taken || seen.has(seat.id)) throw conflict(`${seat.label} was just taken`, 'seat_taken');
         seen.add(seat.id);
-        lines.push({ zoneId: zone.id, seatId: seat.id, qty: 1, unitPrice: zone.price });
-        ticketCount += ticketsInLine(zone, 1);
+        const n = tableSeats(zone, seat);
+        lines.push({ zoneId: zone.id, seatId: seat.id, qty: 1, unitPrice: zone.price * n });
+        ticketCount += n;
       }
     }
     if (ticketCount > event.maxPerOrder) throw badRequest(`Max ${event.maxPerOrder} tickets per order`, 'too_many');
@@ -174,10 +176,12 @@ export const checkoutInput = z.object({
 export async function prepareCheckout(code: string, input: z.infer<typeof checkoutInput>) {
   const o = await orderByCode(code);
   await heldOnly(o);
-  const lines = await db.select({ l: schema.ticketOrderLines, z: schema.eventZones }).from(schema.ticketOrderLines)
-    .innerJoin(schema.eventZones, eq(schema.eventZones.id, schema.ticketOrderLines.zoneId)).where(eq(schema.ticketOrderLines.orderId, o.id));
+  const lines = await db.select({ l: schema.ticketOrderLines, z: schema.eventZones, s: schema.eventSeats }).from(schema.ticketOrderLines)
+    .innerJoin(schema.eventZones, eq(schema.eventZones.id, schema.ticketOrderLines.zoneId))
+    .leftJoin(schema.eventSeats, eq(schema.eventSeats.id, schema.ticketOrderLines.seatId)).where(eq(schema.ticketOrderLines.orderId, o.id))
+    .orderBy(asc(schema.eventZones.sort), asc(schema.eventSeats.label));
   const slots: { zoneId: string; seatId: string | null }[] = [];
-  for (const { l, z } of lines) for (let i = 0; i < ticketsInLine(z, l.qty); i++) slots.push({ zoneId: z.id, seatId: l.seatId });
+  for (const { l, z, s } of lines) for (let i = 0; i < (l.seatId ? tableSeats(z, s) : l.qty); i++) slots.push({ zoneId: z.id, seatId: l.seatId });
 
   if (o.promoCodeId) {
     const [p] = await db.select().from(schema.promoCodes).where(eq(schema.promoCodes.id, o.promoCodeId));

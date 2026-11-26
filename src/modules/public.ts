@@ -5,11 +5,11 @@ import { and, asc, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { guestUser, parse } from '../lib/http.js';
 import { conflict, notFound } from '../lib/errors.js';
-import { nightOf, weekdayOf } from '../lib/dates.js';
+import { byNight, nightOf, weekdayOf } from '../lib/dates.js';
 import { qrPng } from '../integrations/qr.js';
 import { googleWalletUrl, applePass } from '../integrations/wallet.js';
 import { config } from '../config.js';
-import { bookingInput, createBooking, statusUrl } from './reservations.js';
+import { acceptReservation, bookingInput, createBooking, statusUrl } from './reservations.js';
 import { startPayment } from './payments.js';
 import { tierFor } from './guests-service.js';
 
@@ -23,13 +23,19 @@ export default async function publicRoutes(app: FastifyInstance) {
   /* The venue's white-label booking page. */
   app.get<{ Params: { slug: string } }>('/public/venues/:slug', async (req) => {
     const v = await venueBySlug(req.params.slug);
-    const zones = await db.select({ id: schema.floorItems.id, name: schema.floorItems.label, minSpend: schema.floorItems.minSpend, color: schema.floorItems.color })
-      .from(schema.floorItems).where(and(eq(schema.floorItems.venueId, v.id), eq(schema.floorItems.kind, 'zone'), eq(schema.floorItems.enabled, true)))
+    const items = await db.select().from(schema.floorItems).where(and(eq(schema.floorItems.venueId, v.id), eq(schema.floorItems.enabled, true)))
       .orderBy(asc(schema.floorItems.sort));
+    const s = v.settings;
     return {
-      venue: { name: v.name, slug: v.slug, logoUrl: v.logoUrl, address: v.address, mapUrl: v.mapUrl, instagram: v.instagram, tiktok: v.tiktok, phone: v.phone },
+      venue: { name: v.name, slug: v.slug, logoUrl: v.logoUrl, address: v.address, mapUrl: v.mapUrl, instagram: v.instagram, tiktok: v.tiktok, phone: v.phone, where: s.where ?? v.address ?? '', color: s.color ?? null },
       depositPerPerson: v.depositPerPerson,
-      areas: zones,
+      notifyChannel: v.notifyChannel,
+      askNames: s.askNames ?? true,
+      mapPick: s.mapPick ?? false,
+      socials: s.socials ?? {},
+      areas: items.filter((i) => i.kind === 'zone').map((z) => ({ id: z.id, name: z.label, minSpend: z.minSpend, deposit: z.deposit, color: z.color })),
+      /** The floor map, for venues that let guests pick their table. */
+      layout: s.mapPick ? items.filter((i) => i.kind !== 'chair').map((i) => ({ id: i.id, kind: i.kind, shape: i.shape, label: i.label, x: i.x, y: i.y, w: i.w, h: i.h, rotation: i.rotation, seats: i.seats, zoneId: i.zoneId })) : [],
     };
   });
 
@@ -41,14 +47,27 @@ export default async function publicRoutes(app: FastifyInstance) {
       eq(schema.timeSlots.venueId, v.id), eq(schema.timeSlots.active, true),
       or(isNull(schema.timeSlots.weekday), eq(schema.timeSlots.weekday, weekdayOf(date))),
     )).orderBy(asc(schema.timeSlots.startsAt));
+    slots.sort(byNight);
     const taken = slots.length ? await db.select({ slotId: schema.reservations.slotId, n: sql<number>`sum(${schema.reservations.partySize})::int` })
+      .from(schema.reservations).where(and(
+        eq(schema.reservations.date, date), inArray(schema.reservations.slotId, slots.map((s) => s.id)),
+        inArray(schema.reservations.status, ['in_review', 'accepted', 'confirmed', 'arrived']),
+      )).groupBy(schema.reservations.slotId) : [];
+    const takenTables = (await db.select({ t: schema.reservations.tableId }).from(schema.reservations).where(and(
+      eq(schema.reservations.venueId, v.id), eq(schema.reservations.date, date), sql`${schema.reservations.tableId} is not null`,
+      inArray(schema.reservations.status, ['in_review', 'accepted', 'confirmed', 'arrived']),
+    ))).map((r) => r.t);
+    const counts = slots.length ? await db.select({ slotId: schema.reservations.slotId, n: sql<number>`count(*)::int` })
       .from(schema.reservations).where(and(
         eq(schema.reservations.date, date), inArray(schema.reservations.slotId, slots.map((s) => s.id)),
         inArray(schema.reservations.status, ['in_review', 'accepted', 'confirmed', 'arrived']),
       )).groupBy(schema.reservations.slotId) : [];
     return {
       date,
+      takenTables,
       slots: slots.map((s) => {
+        const bookings = counts.find((t) => t.slotId === s.id)?.n ?? 0;
+        if (s.maxBookings > 0 && bookings >= s.maxBookings) return { id: s.id, from: s.startsAt, to: s.endsAt, full: true, placesLeft: 0 };
         const used = taken.find((t) => t.slotId === s.id)?.n ?? 0;
         return { id: s.id, from: s.startsAt, to: s.endsAt, full: s.capacity > 0 && used >= s.capacity, placesLeft: s.capacity > 0 ? Math.max(0, s.capacity - used) : null };
       }),
@@ -58,7 +77,8 @@ export default async function publicRoutes(app: FastifyInstance) {
   /* Guest sends a booking request. It goes to the venue "In review". */
   app.post<{ Params: { slug: string } }>('/public/venues/:slug/bookings', async (req, reply) => {
     const v = await venueBySlug(req.params.slug);
-    const r = await createBooking(v, parse(bookingInput, req.body));
+    let r = await createBooking(v, parse(bookingInput, req.body));
+    if (v.settings.approval === 'auto') r = await acceptReservation(v, r, {});
     reply.code(201);
     return { code: r.code, status: r.status, statusUrl: statusUrl(r.code) };
   });
@@ -71,14 +91,16 @@ export default async function publicRoutes(app: FastifyInstance) {
     const { r, v } = row;
     const party = await db.select({ name: schema.reservationGuests.name, isBooker: schema.reservationGuests.isBooker, qrToken: schema.reservationGuests.qrToken, checkedInAt: schema.reservationGuests.checkedInAt })
       .from(schema.reservationGuests).where(eq(schema.reservationGuests.reservationId, r.id)).orderBy(desc(schema.reservationGuests.isBooker));
-    let area: string | null = null;
-    if (r.zoneId) [{ area }] = await db.select({ area: schema.floorItems.label }).from(schema.floorItems).where(eq(schema.floorItems.id, r.zoneId));
+    const label = async (id: string | null) => id ? (await db.select({ l: schema.floorItems.label }).from(schema.floorItems).where(eq(schema.floorItems.id, id)))[0]?.l ?? null : null;
+    const area = await label(r.zoneId);
+    const table = await label(r.tableId);
     const showPasses = ['confirmed', 'arrived'].includes(r.status);
     return {
-      code: r.code, status: r.status, date: r.date, time: r.slotLabel, partySize: r.partySize, area, minSpend: r.minSpend,
+      code: r.code, status: r.status, date: r.date, time: r.slotLabel, partySize: r.partySize, area, table, minSpend: r.minSpend, qrToken: showPasses ? party.find((p) => p.isBooker)?.qrToken ?? null : null,
       deposit: { amount: r.depositAmount, paid: Boolean(r.depositPaidAt), due: r.status === 'accepted' && r.depositAmount > 0 },
       declineReason: r.status === 'declined' ? r.declineReason : null,
-      venue: { name: v.name, logoUrl: v.logoUrl, address: v.address, mapUrl: v.mapUrl, phone: v.phone, instagram: v.instagram },
+      venue: { name: v.name, slug: v.slug, logoUrl: v.logoUrl, address: v.address, mapUrl: v.mapUrl, phone: v.phone, instagram: v.instagram, where: v.settings.where ?? v.address ?? '', color: v.settings.color ?? null },
+      notifyChannel: v.notifyChannel,
       party: party.map((p) => ({ name: p.name, isBooker: p.isBooker, arrived: Boolean(p.checkedInAt), passUrl: showPasses ? `${config.publicAppUrl}/p/${p.qrToken}` : null })),
     };
   });

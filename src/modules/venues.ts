@@ -3,6 +3,7 @@ import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
+import { byNight } from '../lib/dates.js';
 import { parse, venueAccess, MANAGERS } from '../lib/http.js';
 import { badRequest, notFound } from '../lib/errors.js';
 
@@ -22,6 +23,7 @@ const floorItem = z.object({
   seats: z.number().int().min(0).default(0),
   enabled: z.boolean().default(true),
   minSpend: z.number().int().min(0).default(0),
+  deposit: z.number().int().min(0).default(0),
   color: z.string().nullish(),
   sort: z.number().int().default(0),
 });
@@ -31,8 +33,24 @@ const slot = z.object({
   startsAt: z.string().regex(/^\d{2}:\d{2}$/),
   endsAt: z.string().regex(/^\d{2}:\d{2}$/),
   capacity: z.number().int().min(0).default(0),
+  maxBookings: z.number().int().min(0).default(0),
   active: z.boolean().default(true),
 });
+
+const settingsBody = z.object({
+  where: z.string().max(80),
+  color: z.string().max(20),
+  firstSlot: z.number().int().min(0).max(36 * 60),
+  lastSlot: z.number().int().min(0).max(36 * 60),
+  slotStep: z.number().int().min(15).max(240),
+  maxPerSlot: z.number().int().min(0).max(500),
+  approval: z.enum(['manual', 'auto']),
+  askNames: z.boolean(),
+  mapPick: z.boolean(),
+  socials: z.record(z.string().max(30), z.string().max(200)),
+  connections: z.record(z.string().max(30), z.boolean()),
+  automations: z.record(z.string().max(30), z.boolean()),
+}).partial();
 
 export default async function venues(app: FastifyInstance) {
   app.get<{ Params: P }>('/venues/:venueId', async (req) => {
@@ -50,8 +68,12 @@ export default async function venues(app: FastifyInstance) {
       notifyChannel: z.enum(schema.notifyChannel.enumValues),
       serviceBps: z.number().int().min(0).max(3000), vatBps: z.number().int().min(0).max(3000),
       depositPerPerson: z.number().int().min(0), pointsPerAmount: z.number().int().min(0),
+      settings: settingsBody,
     }).partial(), req.body);
-    const [v] = await db.update(schema.venues).set(b).where(eq(schema.venues.id, req.params.venueId)).returning();
+    const { settings, ...rest } = b;
+    const [cur] = await db.select({ settings: schema.venues.settings }).from(schema.venues).where(eq(schema.venues.id, req.params.venueId));
+    const [v] = await db.update(schema.venues).set({ ...rest, ...(settings ? { settings: { ...cur?.settings, ...settings } } : {}) })
+      .where(eq(schema.venues.id, req.params.venueId)).returning();
     return v;
   });
 
@@ -114,7 +136,7 @@ export default async function venues(app: FastifyInstance) {
       for (const it of items) {
         const values = {
           venueId, kind: it.kind, label: it.label, shape: it.shape ?? null, x: it.x, y: it.y, w: it.w, h: it.h,
-          rotation: it.rotation, seats: it.seats, enabled: it.enabled, minSpend: it.minSpend, color: it.color ?? null, sort: it.sort,
+          rotation: it.rotation, seats: it.seats, enabled: it.enabled, minSpend: it.minSpend, deposit: it.deposit, color: it.color ?? null, sort: it.sort,
         };
         let rowId: string;
         if (it.id) {
@@ -141,7 +163,7 @@ export default async function venues(app: FastifyInstance) {
   /* Switch one chair / sofa / table on or off. */
   app.patch<{ Params: P & { itemId: string } }>('/venues/:venueId/floor/:itemId', async (req) => {
     await venueAccess(req, req.params.venueId, MANAGERS);
-    const b = parse(z.object({ enabled: z.boolean().optional(), label: z.string().optional(), minSpend: z.number().int().min(0).optional(), seats: z.number().int().min(0).optional() }), req.body);
+    const b = parse(z.object({ enabled: z.boolean().optional(), label: z.string().optional(), minSpend: z.number().int().min(0).optional(), deposit: z.number().int().min(0).optional(), seats: z.number().int().min(0).optional() }), req.body);
     const [it] = await db.update(schema.floorItems).set(b)
       .where(and(eq(schema.floorItems.id, req.params.itemId), eq(schema.floorItems.venueId, req.params.venueId))).returning();
     if (!it) throw notFound('Item not found');
@@ -151,7 +173,7 @@ export default async function venues(app: FastifyInstance) {
   /* ---------- time slots */
   app.get<{ Params: P }>('/venues/:venueId/slots', async (req) => {
     await venueAccess(req, req.params.venueId);
-    return db.select().from(schema.timeSlots).where(eq(schema.timeSlots.venueId, req.params.venueId)).orderBy(asc(schema.timeSlots.startsAt));
+    return (await db.select().from(schema.timeSlots).where(eq(schema.timeSlots.venueId, req.params.venueId))).sort(byNight);
   });
 
   app.put<{ Params: P }>('/venues/:venueId/slots', async (req) => {

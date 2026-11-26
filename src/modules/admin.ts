@@ -3,7 +3,9 @@ import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import { eq, asc } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
-import { parse, superAdmin } from '../lib/http.js';
+import { parse, staffUser, superAdmin } from '../lib/http.js';
+import { config } from '../config.js';
+import { paymobEnabled } from '../integrations/paymob.js';
 import { slugify } from '../lib/codes.js';
 import { conflict } from '../lib/errors.js';
 
@@ -15,6 +17,19 @@ export async function getPlatformSettings() {
 }
 
 export default async function admin(app: FastifyInstance) {
+  /* What every staff screen needs: ticket fees and which integrations are live. */
+  app.get('/platform', async (req) => {
+    await staffUser(req);
+    const s = await getPlatformSettings();
+    return {
+      bookingFeeBps: s.bookingFeeBps, feeVatBps: s.feeVatBps,
+      integrations: {
+        paymob: paymobEnabled(), whatsapp: Boolean(config.whatsapp.token && config.whatsapp.phoneNumberId), email: Boolean(config.email.resendKey),
+        googleWallet: Boolean(config.googleWallet.issuerId && config.googleWallet.privateKey),
+      },
+    };
+  });
+
   app.get('/admin/settings', async (req) => {
     await superAdmin(req);
     return getPlatformSettings();

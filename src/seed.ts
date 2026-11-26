@@ -17,16 +17,24 @@ const [exists] = await db.select().from(schema.venues).where(eq(schema.venues.sl
 if (!exists) {
   const [v] = await db.insert(schema.venues).values({ name: 'Lumen Rooftop', slug: 'lumen-rooftop', depositPerPerson: 50000, instagram: 'lumenrooftop', address: 'New Cairo' }).returning();
   await db.insert(schema.venueStaff).values({ venueId: v.id, userId: admin.id, role: 'owner' });
-  const [terrace] = await db.insert(schema.floorItems).values({ venueId: v.id, kind: 'zone', label: 'Terrace', x: 0, y: 0, w: 600, h: 400, minSpend: 600000 }).returning();
-  const [vip] = await db.insert(schema.floorItems).values({ venueId: v.id, kind: 'zone', label: 'VIP', x: 600, y: 0, w: 400, h: 400, minSpend: 1500000 }).returning();
-  for (let i = 1; i <= 6; i++) {
-    await db.insert(schema.floorItems).values({ venueId: v.id, kind: 'table', shape: 'round', label: `T${i}`, x: 40 + (i - 1) * 90, y: 80, w: 70, h: 70, seats: 4, zoneId: terrace.id });
-  }
-  await db.insert(schema.floorItems).values({ venueId: v.id, kind: 'sofa', shape: 'u-sofa', label: 'V1', x: 650, y: 80, w: 140, h: 100, seats: 8, zoneId: vip.id });
-  await db.insert(schema.timeSlots).values([
-    { venueId: v.id, startsAt: '20:00', endsAt: '22:00', capacity: 60 },
-    { venueId: v.id, startsAt: '22:00', endsAt: '02:00', capacity: 120 },
+  // Laid out on the editor's 1000 × 620 canvas.
+  const [terrace] = await db.insert(schema.floorItems).values({ venueId: v.id, kind: 'zone', label: 'Terrace', x: 30, y: 110, w: 560, h: 490, minSpend: 600000, sort: 0 }).returning();
+  const [vip] = await db.insert(schema.floorItems).values({ venueId: v.id, kind: 'zone', label: 'VIP', x: 610, y: 110, w: 360, h: 490, minSpend: 1500000, deposit: 200000, sort: 1 }).returning();
+  await db.insert(schema.floorItems).values([
+    { venueId: v.id, kind: 'bar', label: 'Bar', x: 30, y: 20, w: 560, h: 70, sort: 2 },
+    { venueId: v.id, kind: 'dj', label: 'DJ', x: 610, y: 20, w: 360, h: 70, sort: 3 },
+    { venueId: v.id, kind: 'entrance', label: 'Entrance', x: 30, y: 606, w: 140, h: 10, sort: 4 },
+    ...[[140, 240], [310, 240], [480, 240], [140, 460], [310, 460], [480, 460]].map(([x, y], i) => (
+      { venueId: v.id, kind: 'table' as const, shape: 'round', label: `T${i + 1}`, x, y, w: 1, h: 1, seats: 4, zoneId: terrace.id, sort: 5 + i })),
+    ...[[700, 240, 8], [880, 240, 8], [790, 470, 10]].map(([x, y, seats], i) => (
+      { venueId: v.id, kind: 'sofa' as const, shape: 'sofa', label: `V${i + 1}`, x, y, w: 1, h: 1, seats, zoneId: vip.id, sort: 11 + i })),
   ]);
+  // Same grid as Venue setup's defaults: 9 PM to 12:30 AM, every 30 minutes, 4 bookings each.
+  await db.insert(schema.timeSlots).values(Array.from({ length: 8 }, (_, i) => {
+    const hm = (m: number) => `${String(Math.floor(m / 60) % 24).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+    const m = 21 * 60 + i * 30;
+    return { venueId: v.id, startsAt: hm(m), endsAt: hm(m + 30), capacity: 0, maxBookings: 4 };
+  }));
   await db.insert(schema.menuItems).values([
     { venueId: v.id, category: 'Drinks', name: 'Mojito', price: 32000 },
     { venueId: v.id, category: 'Drinks', name: 'Espresso', price: 9000 },

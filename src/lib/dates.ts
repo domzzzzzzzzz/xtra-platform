@@ -16,3 +16,10 @@ export function nightOf(d = new Date(), tz = 'Africa/Cairo') {
 
 export const prettyDate = (ymd: string) =>
   new Date(`${ymd}T12:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+
+/** Minutes from the start of the night for "HH:MM", so 00:30 sorts after 23:30. */
+export const nightMinutes = (hhmm: string) => {
+  const [h, m] = hhmm.split(':').map(Number);
+  return (h < 6 ? h + 24 : h) * 60 + (m || 0);
+};
+export const byNight = (a: { startsAt: string }, b: { startsAt: string }) => nightMinutes(a.startsAt) - nightMinutes(b.startsAt);

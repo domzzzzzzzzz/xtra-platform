@@ -62,7 +62,7 @@ describe('floor map, booking, deposit, door, bill', () => {
 
   it('saves a floor map with zones, tables and chairs, and finds each table its zone', async () => {
     const r = await api.put(`${v()}/floor`, { items: [
-      { ref: 'z1', kind: 'zone', label: 'Terrace', x: 0, y: 0, w: 500, h: 400, minSpend: 600000 },
+      { ref: 'z1', kind: 'zone', label: 'Terrace', x: 0, y: 0, w: 500, h: 400, minSpend: 600000, deposit: 150000 },
       { ref: 't1', kind: 'table', shape: 'round', label: 'T1', x: 50, y: 50, w: 80, h: 80, seats: 4 },
       { kind: 'chair', parentRef: 't1', x: 40, y: 40, w: 20, h: 20 },
       { kind: 'chair', parentRef: 't1', x: 120, y: 40, w: 20, h: 20, enabled: false },
@@ -191,7 +191,7 @@ describe('ticketing', () => {
     const map = await api.put(`${v()}/events/${eventId}/map`, { zones: [
       { name: 'Stage', kind: 'decor', x: 0, y: 0, w: 10, h: 2 },
       { name: 'Fan pit', kind: 'standing', price: 100000, capacity: 3, x: 0, y: 3, w: 10, h: 4 },
-      { name: 'VIP lounge', kind: 'table', price: 2000000, seatsPerTable: 8, x: 0, y: 8, w: 10, h: 3, seats: [{ label: 'A1' }, { label: 'A2' }] },
+      { name: 'VIP lounge', kind: 'table', price: 250000, x: 0, y: 8, w: 10, h: 3, seats: [{ label: 'A1', seats: 8 }, { label: 'A2', seats: 8 }] },
     ] });
     standing = map.body.zones.find((z: any) => z.name === 'Fan pit');
     lounge = map.body.zones.find((z: any) => z.name === 'VIP lounge');
@@ -298,5 +298,37 @@ describe('guests, community, marketing', () => {
     const t = await api.put(`${v()}/tiers`, { tiers: [{ name: 'Member', minSpend: 0, perks: [] }, { name: 'Black', minSpend: 500000, perks: ['Free entry'] }] });
     expect(t.body).toHaveLength(2);
     expect((await api.get(`${v()}/guests?q=mona`)).body[0].tier).toBe('Black');
+  });
+});
+
+describe('live app support', () => {
+  it('staff screens get ticket fees and which integrations are live', async () => {
+    const r = await api.get('/api/platform');
+    expect(r.body).toMatchObject({ bookingFeeBps: 500, feeVatBps: 1400, integrations: { paymob: false, whatsapp: false, email: false, googleWallet: false } });
+    const anon = await app.inject({ url: '/api/platform' });
+    expect(anon.statusCode).toBe(401);
+  });
+
+  it('a guest who goes back can let go of held tickets', async () => {
+    const e = await api.post(`${v()}/events`, { title: 'Release Night', startsAt: new Date(Date.now() + 5 * 86400_000).toISOString() });
+    const map = await api.put(`${v()}/events/${e.body.id}/map`, { zones: [{ name: 'Floor', kind: 'standing', price: 50000, capacity: 2, x: 0, y: 0, w: 10, h: 4 }] });
+    const zoneId = map.body.zones[0].id;
+    await api.patch(`${v()}/events/${e.body.id}`, { status: 'published' });
+    const h = await api.post(`/api/public/events/${e.body.id}/hold`, { items: [{ zoneId, qty: 2 }] });
+    expect((await api.post(`/api/public/events/${e.body.id}/hold`, { items: [{ zoneId, qty: 1 }] })).status).toBe(409);
+    expect((await api.post(`/api/public/orders/${h.body.code}/release`)).body.released).toBe(true);
+    expect((await api.post(`/api/public/events/${e.body.id}/hold`, { items: [{ zoneId, qty: 2 }] })).status).toBe(201);
+  });
+
+  it('automatic birthday message goes out once to opted-in guests', async () => {
+    const { runAutomations } = await import('../src/modules/automations.js');
+    const { localDate } = await import('../src/lib/dates.js');
+    const [mona] = (await api.get(`${v()}/guests?q=mona`)).body;
+    await db.update(schema.guests).set({ birthDate: `1995-${localDate(new Date(Date.now() + 7 * 86400_000)).slice(5)}`, whatsappOptIn: true }).where(eq(schema.guests.id, mona.id));
+    await runAutomations();
+    await runAutomations();
+    const sent = await db.select().from(schema.messages).where(eq(schema.messages.guestId, mona.id));
+    expect(sent.filter((m) => m.kind.startsWith('auto:bday:'))).toHaveLength(1);
+    expect((await api.get(`${v()}/automations`)).body.bday).toBe(1);
   });
 });

@@ -1,6 +1,6 @@
-# XTRA platform API
+# XTRA platform
 
-The backend for XTRA, a hospitality system sold to venues in Egypt: reservations
+The backend and web app for XTRA, a hospitality system sold to venues in Egypt: reservations
 with a seat map, door check-in, ordering and bills, white-label ticketing, promo
 codes, payments, guest accounts, community tiers and WhatsApp/email marketing.
 
@@ -15,6 +15,27 @@ npm install
 npm run seed                # creates the XTRA admin and a demo venue "lumen-rooftop"
 npm run dev                 # http://localhost:3000
 ```
+
+Open http://localhost:3000 and sign in with the XTRA admin (`SUPER_ADMIN_EMAIL` /
+`SUPER_ADMIN_PASSWORD`, `admin@xtra.eg` / `admin1234` by default).
+
+## The web app (`web/`)
+
+One page, no build step, served by the same server:
+
+| Address | Who | What |
+| --- | --- | --- |
+| `/` | Staff | Floor, bookings, door scanner, orders and bills, events, marketing, guests, community, booking page, floor map, venue setup |
+| `/book/:slug` | Guests | Booking page of a venue |
+| `/b/:code` | Guests | Booking status, deposit payment, QR pass |
+| `/e/:eventId` | Guests | Ticket page: seat map, 15-minute hold, promo code, Paymob checkout |
+| `/o/:code` | Guests | Ticket order: payment status and every ticket |
+| `/t/:token`, `/p/:token` | Guests | One ticket or booking pass with its QR |
+| `/me` | Guests | Account, signed in with a WhatsApp code |
+
+Staff screens show what each role may use (owner and manager: everything, door:
+door and bookings, waiter: floor and orders). The QR libraries are vendored in
+`web/vendor` (MIT).
 
 Tests need a database called `xtra_test` (`createdb xtra_test`), then `npm test`.
 
@@ -65,7 +86,6 @@ All under `/api`. Staff send `Authorization: Bearer <token>` from `/auth/login`.
 
 ## Next
 
-- Connect the front-end prototype to this API.
 - Apple Wallet `.pkpass` signing once the Apple certificate exists.
 - Paymob split payouts to each venue's sub-account.
 - Hosting (e.g. Railway / Render / AWS Bahrain) and a real domain for guest links.

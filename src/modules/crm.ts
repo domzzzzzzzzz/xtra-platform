@@ -12,12 +12,32 @@ type P = { venueId: string };
 type Segment = import('../db/schema.js').Segment;
 
 const segmentBody = z.object({
+  key: z.string().max(20).optional(),
   tags: z.array(z.string()).optional(),
   tierIds: z.array(z.string().uuid()).optional(),
   minVisits: z.number().int().min(0).optional(),
   lastVisitBeforeDays: z.number().int().min(1).optional(),
   gender: z.enum(['male', 'female', 'other']).optional(),
+  boughtTickets: z.boolean().optional(),
+  birthdayWithinDays: z.number().int().min(1).max(366).optional(),
 });
+
+/** Days until the next birthday (0 = today). */
+const daysToBirthday = (birth: string | null) => {
+  if (!birth) return Infinity;
+  const now = new Date();
+  const [, m, d] = birth.split('-').map(Number);
+  let next = Date.UTC(now.getUTCFullYear(), m - 1, d);
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  if (next < today) next = Date.UTC(now.getUTCFullYear() + 1, m - 1, d);
+  return Math.round((next - today) / 86400_000);
+};
+
+async function ticketBuyers(venueId: string) {
+  const rows = await db.selectDistinct({ g: schema.ticketOrders.guestId }).from(schema.ticketOrders)
+    .where(and(eq(schema.ticketOrders.venueId, venueId), eq(schema.ticketOrders.status, 'paid')));
+  return new Set(rows.map((r) => r.g));
+}
 
 /**
  * Guests a campaign can reach. Only guests who opted in on that channel
@@ -33,6 +53,11 @@ export async function audience(venueId: string, channel: 'whatsapp' | 'email', s
   let rows = await db.select({ g: schema.guests, vg: schema.venueGuests }).from(schema.venueGuests)
     .innerJoin(schema.guests, eq(schema.guests.id, schema.venueGuests.guestId)).where(and(...conds));
   if (seg.tags?.length) rows = rows.filter((r) => r.vg.tags.some((t) => seg.tags!.includes(t)));
+  if (seg.boughtTickets) {
+    const buyers = await ticketBuyers(venueId);
+    rows = rows.filter((r) => buyers.has(r.g.id));
+  }
+  if (seg.birthdayWithinDays) rows = rows.filter((r) => daysToBirthday(r.g.birthDate) <= seg.birthdayWithinDays!);
   if (seg.tierIds?.length) {
     const tiers = await db.select().from(schema.communityTiers).where(eq(schema.communityTiers.venueId, venueId)).orderBy(desc(schema.communityTiers.minSpend));
     rows = rows.filter((r) => {
@@ -90,13 +115,17 @@ export default async function crm(app: FastifyInstance) {
       conds.push(or(ilike(schema.guests.firstName, q), ilike(schema.guests.lastName, q), ilike(schema.guests.phone, q), ilike(schema.guests.email, q), ilike(schema.guests.instagram, q))!);
     }
     if (req.query.tag) conds.push(sql`${schema.venueGuests.tags} ? ${req.query.tag}`);
-    const limit = Math.min(Number(req.query.limit ?? 50) || 50, 200);
+    const limit = Math.min(Number(req.query.limit ?? 500) || 500, 2000);
     const offset = Number(req.query.offset ?? 0) || 0;
     const rows = await db.select({ g: schema.guests, vg: schema.venueGuests }).from(schema.venueGuests)
       .innerJoin(schema.guests, eq(schema.guests.id, schema.venueGuests.guestId)).where(and(...conds))
       .orderBy(desc(schema.venueGuests.totalSpend), asc(schema.guests.firstName)).limit(limit).offset(offset);
     const tiers = await db.select().from(schema.communityTiers).where(eq(schema.communityTiers.venueId, req.params.venueId)).orderBy(desc(schema.communityTiers.minSpend));
+    const noShows = await db.select({ g: schema.reservations.guestId, n: sql<number>`count(*)::int` }).from(schema.reservations)
+      .where(and(eq(schema.reservations.venueId, req.params.venueId), eq(schema.reservations.status, 'no_show'))).groupBy(schema.reservations.guestId);
+    const buyers = await ticketBuyers(req.params.venueId);
     return rows.map(({ g, vg }) => ({
+      birthDate: g.birthDate, noShows: noShows.find((n) => n.g === g.id)?.n ?? 0, boughtTickets: buyers.has(g.id),
       id: g.id, firstName: g.firstName, lastName: g.lastName, phone: g.phone, email: g.email, instagram: g.instagram, gender: g.gender,
       whatsappOptIn: g.whatsappOptIn, emailOptIn: g.emailOptIn,
       tags: vg.tags, notes: vg.notes, visits: vg.visits, totalSpend: vg.totalSpend, points: vg.points, blocked: vg.blocked, lastVisitAt: vg.lastVisitAt,

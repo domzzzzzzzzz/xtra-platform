@@ -19,6 +19,9 @@ const eventBody = z.object({
   slug: z.string().optional(),
   posterUrl: z.string().url().nullable().optional(),
   description: z.string().max(5000).default(''),
+  lineup: z.string().max(200).default(''),
+  color: z.string().max(20).nullable().optional(),
+  seatMap: z.boolean().default(true),
   rules: z.array(z.string().max(200)).max(30).default([]),
   startsAt: z.coerce.date(),
   endsAt: z.coerce.date().nullable().optional(),
@@ -33,10 +36,14 @@ const zoneBody = z.object({
   price: z.number().int().min(0).default(0),
   capacity: z.number().int().min(0).default(0),
   seatsPerTable: z.number().int().min(1).max(50).default(1),
+  shape: z.string().max(20).nullish(),
   x: z.number(), y: z.number(), w: z.number().positive(), h: z.number().positive(),
   color: z.string().nullish(),
   sort: z.number().int().default(0),
-  seats: z.array(z.object({ id: z.string().uuid().optional(), label: z.string().min(1).max(20), x: z.number().default(0), y: z.number().default(0), enabled: z.boolean().default(true) })).max(2000).default([]),
+  seats: z.array(z.object({
+    id: z.string().uuid().optional(), label: z.string().min(1).max(20), x: z.number().default(0), y: z.number().default(0),
+    seats: z.number().int().min(1).max(50).default(1), shape: z.string().max(20).nullish(), rotation: z.number().default(0), enabled: z.boolean().default(true),
+  })).max(2000).default([]),
 });
 
 async function loadEvent(venueId: string, eventId: string) {
@@ -53,9 +60,25 @@ async function eventMap(eventId: string) {
 export default async function ticketing(app: FastifyInstance) {
   /* ================= staff ================= */
 
+  /* Every event with its map, what is sold and what it made. */
   app.get<{ Params: P }>('/venues/:venueId/events', async (req) => {
-    await venueAccess(req, req.params.venueId, MANAGERS);
-    return db.select().from(schema.events).where(eq(schema.events.venueId, req.params.venueId)).orderBy(desc(schema.events.startsAt));
+    await venueAccess(req, req.params.venueId, ['owner', 'manager', 'door']);
+    const list = await db.select().from(schema.events).where(eq(schema.events.venueId, req.params.venueId)).orderBy(asc(schema.events.startsAt));
+    return Promise.all(list.map(async (e) => {
+      const map = await eventMap(e.id);
+      const sold = await db.select({ zoneId: schema.tickets.zoneId, seatId: schema.tickets.seatId, n: sql<number>`count(*)::int`, inN: sql<number>`count(${schema.tickets.checkedInAt})::int` })
+        .from(schema.tickets).innerJoin(schema.ticketOrders, eq(schema.ticketOrders.id, schema.tickets.orderId))
+        .where(and(eq(schema.tickets.eventId, e.id), eq(schema.ticketOrders.status, 'paid'))).groupBy(schema.tickets.zoneId, schema.tickets.seatId);
+      const paid = await db.select({ net: sql<number>`coalesce(sum(${schema.ticketOrders.subtotal} - ${schema.ticketOrders.discount}),0)::int`, n: sql<number>`count(*)::int` })
+        .from(schema.ticketOrders).where(and(eq(schema.ticketOrders.eventId, e.id), eq(schema.ticketOrders.status, 'paid')));
+      return {
+        ...e, ...map,
+        soldByZone: Object.fromEntries(map.zones.map((z) => [z.id, sold.filter((s) => s.zoneId === z.id).reduce((a, s) => a + s.n, 0)])),
+        soldSeats: [...new Set(sold.filter((s) => s.seatId).map((s) => s.seatId))],
+        checkedIn: sold.reduce((a, s) => a + s.inN, 0),
+        revenue: paid[0].net, orders: paid[0].n,
+      };
+    }));
   });
 
   app.post<{ Params: P }>('/venues/:venueId/events', async (req, reply) => {
@@ -122,8 +145,9 @@ export default async function ticketing(app: FastifyInstance) {
           await tx.delete(schema.eventSeats).where(eq(schema.eventSeats.id, s.id));
         }
         for (const s of seats) {
-          if (s.id) await tx.update(schema.eventSeats).set({ label: s.label, x: s.x, y: s.y, enabled: s.enabled }).where(and(eq(schema.eventSeats.id, s.id), eq(schema.eventSeats.zoneId, zoneId!)));
-          else await tx.insert(schema.eventSeats).values({ eventId: e.id, zoneId: zoneId!, label: s.label, x: s.x, y: s.y, enabled: s.enabled });
+          const sv = { label: s.label, x: s.x, y: s.y, enabled: s.enabled, seats: s.seats, shape: s.shape ?? null, rotation: s.rotation };
+          if (s.id) await tx.update(schema.eventSeats).set(sv).where(and(eq(schema.eventSeats.id, s.id), eq(schema.eventSeats.zoneId, zoneId!)));
+          else await tx.insert(schema.eventSeats).values({ eventId: e.id, zoneId: zoneId!, ...sv });
         }
       }
     });
@@ -201,29 +225,63 @@ export default async function ticketing(app: FastifyInstance) {
    */
   app.post<{ Params: P }>('/venues/:venueId/promos/batch', async (req, reply) => {
     await venueAccess(req, req.params.venueId, MANAGERS);
-    const b = parse(promoBody.omit({ maxUses: true, lockedPhone: true }).extend({
+    const b = parse(promoBody.omit({ maxUses: true }).extend({
       count: z.number().int().min(1).max(5000).optional(),
       phones: z.array(z.string().min(8)).max(5000).optional(),
-      prefix: z.string().regex(/^[A-Za-z0-9]{0,10}$/).default(''),
+      prefix: z.string().regex(/^[A-Za-z0-9-]{0,10}$/).default(''),
+      /** How many times each code works. */
+      usesPerCode: z.number().int().min(1).max(100).default(1),
     }), req.body);
     if (b.eventId) await loadEvent(req.params.venueId, b.eventId);
     const phones = b.phones?.map(normalizePhone);
+    const lockAll = b.lockedPhone ? normalizePhone(b.lockedPhone) : null;
     const count = phones?.length ?? b.count;
     if (!count) throw badRequest('Give a number of codes or a list of phone numbers');
     const batchId = crypto.randomUUID();
     const prefix = b.prefix.toUpperCase();
     const rows = Array.from({ length: count }, (_, i) => ({
-      venueId: req.params.venueId, eventId: b.eventId, code: `${prefix}${promoCode()}`, percentOff: b.percentOff, maxUses: 1,
-      lockedPhone: phones?.[i] ?? null, batchId, label: b.label, expiresAt: b.expiresAt,
+      venueId: req.params.venueId, eventId: b.eventId, code: `${prefix}${promoCode()}`, percentOff: b.percentOff, maxUses: b.usesPerCode,
+      lockedPhone: phones?.[i] ?? lockAll, batchId, label: b.label, expiresAt: b.expiresAt,
     }));
     const created = await db.insert(schema.promoCodes).values(rows).onConflictDoNothing().returning();
     reply.code(201);
     return { batchId, created: created.length, codes: created.map((c) => ({ code: c.code, lockedPhone: c.lockedPhone })) };
   });
 
+  /* Pause / restart a whole batch of unique codes. */
+  app.patch<{ Params: P & { batchId: string } }>('/venues/:venueId/promos/batch/:batchId', async (req) => {
+    await venueAccess(req, req.params.venueId, MANAGERS);
+    const b = parse(z.object({ active: z.boolean() }), req.body);
+    const rows = await db.update(schema.promoCodes).set({ active: b.active })
+      .where(and(eq(schema.promoCodes.venueId, req.params.venueId), eq(schema.promoCodes.batchId, req.params.batchId))).returning();
+    return { updated: rows.length };
+  });
+
+  /* Delete codes nobody used; used codes are paused instead so sales keep their history. */
+  app.delete<{ Params: P & { batchId: string } }>('/venues/:venueId/promos/batch/:batchId', async (req) => {
+    await venueAccess(req, req.params.venueId, MANAGERS);
+    const where = and(eq(schema.promoCodes.venueId, req.params.venueId), eq(schema.promoCodes.batchId, req.params.batchId));
+    const paused = await db.update(schema.promoCodes).set({ active: false, batchId: null, label: null }).where(and(where, sql`${schema.promoCodes.usedCount} > 0`)).returning();
+    const gone = await db.delete(schema.promoCodes).where(where).returning();
+    return { deleted: gone.length, paused: paused.length };
+  });
+
+  app.delete<{ Params: P & { promoId: string } }>('/venues/:venueId/promos/:promoId', async (req) => {
+    await venueAccess(req, req.params.venueId, MANAGERS);
+    const where = and(eq(schema.promoCodes.id, req.params.promoId), eq(schema.promoCodes.venueId, req.params.venueId));
+    const [p] = await db.select().from(schema.promoCodes).where(where);
+    if (!p) throw notFound('Code not found');
+    if (p.usedCount > 0) {
+      await db.update(schema.promoCodes).set({ active: false }).where(where);
+      return { deleted: false, paused: true };
+    }
+    await db.delete(schema.promoCodes).where(where);
+    return { deleted: true };
+  });
+
   app.patch<{ Params: P & { promoId: string } }>('/venues/:venueId/promos/:promoId', async (req) => {
     await venueAccess(req, req.params.venueId, MANAGERS);
-    const b = parse(z.object({ active: z.boolean(), maxUses: z.number().int().min(1).nullable(), expiresAt: z.coerce.date().nullable(), label: z.string().nullable() }).partial(), req.body);
+    const b = parse(z.object({ active: z.boolean(), percentOff: z.number().int().min(1).max(100), maxUses: z.number().int().min(1).nullable(), expiresAt: z.coerce.date().nullable(), label: z.string().nullable() }).partial(), req.body);
     const [p] = await db.update(schema.promoCodes).set(b).where(and(eq(schema.promoCodes.id, req.params.promoId), eq(schema.promoCodes.venueId, req.params.venueId))).returning();
     if (!p) throw notFound('Code not found');
     return p;
@@ -249,13 +307,13 @@ export default async function ticketing(app: FastifyInstance) {
     const rates = await feeRatesFor(e.id);
     const priced = map.zones.filter((z) => z.kind !== 'decor');
     return {
-      event: { id: e.id, title: e.title, posterUrl: e.posterUrl, description: e.description, rules: e.rules, startsAt: e.startsAt, endsAt: e.endsAt, maxPerOrder: e.maxPerOrder },
-      venue: { name: v.name, slug: v.slug, logoUrl: v.logoUrl, address: v.address, mapUrl: v.mapUrl, instagram: v.instagram, tiktok: v.tiktok },
+      event: { id: e.id, title: e.title, posterUrl: e.posterUrl, description: e.description, lineup: e.lineup, color: e.color, seatMap: e.seatMap, rules: e.rules, startsAt: e.startsAt, endsAt: e.endsAt, maxPerOrder: e.maxPerOrder },
+      venue: { name: v.name, slug: v.slug, logoUrl: v.logoUrl, address: v.address, mapUrl: v.mapUrl, instagram: v.instagram, tiktok: v.tiktok, where: v.settings.where ?? v.address ?? '', color: v.settings.color ?? null, timezone: v.timezone },
       priceFrom: priced.length ? Math.min(...priced.map((z) => z.price)) : 0,
       fees: rates,
       holdMinutes: config.holdMinutes,
       zones: map.zones.map(({ capacity: _c, ...z }) => z),
-      seats: map.seats.map((s) => ({ id: s.id, zoneId: s.zoneId, label: s.label, x: s.x, y: s.y, taken: s.taken })),
+      seats: map.seats.map((s) => ({ id: s.id, zoneId: s.zoneId, label: s.label, x: s.x, y: s.y, seats: s.seats, shape: s.shape, rotation: s.rotation, taken: s.taken })),
     };
   });
 
@@ -267,6 +325,15 @@ export default async function ticketing(app: FastifyInstance) {
   });
 
   app.get<{ Params: { code: string } }>('/public/orders/:code', async (req) => publicOrder(await orderByCode(req.params.code)));
+
+  /* Let go of held seats (the guest went back to change their picks). */
+  app.post<{ Params: { code: string } }>('/public/orders/:code/release', async (req) => {
+    const o = await orderByCode(req.params.code);
+    const [done] = await db.update(schema.ticketOrders).set({ status: 'expired' })
+      .where(and(eq(schema.ticketOrders.id, o.id), eq(schema.ticketOrders.status, 'held'))).returning();
+    if (done?.promoCodeId) await db.update(schema.promoCodes).set({ usedCount: sql`greatest(${schema.promoCodes.usedCount} - 1, 0)` }).where(eq(schema.promoCodes.id, done.promoCodeId));
+    return { released: Boolean(done) };
+  });
 
   app.post<{ Params: { code: string } }>('/public/orders/:code/promo', async (req) => {
     const b = parse(z.object({ code: z.string().max(40).nullable(), phone: z.string().optional() }), req.body);
@@ -291,14 +358,19 @@ export default async function ticketing(app: FastifyInstance) {
 }
 
 async function publicOrder(o: typeof schema.ticketOrders.$inferSelect) {
-  const lines = await db.select({ zone: schema.eventZones.name, kind: schema.eventZones.kind, seatsPerTable: schema.eventZones.seatsPerTable, seat: schema.eventSeats.label, qty: schema.ticketOrderLines.qty, unitPrice: schema.ticketOrderLines.unitPrice })
+  const rows = await db.select({ zone: schema.eventZones.name, kind: schema.eventZones.kind, seat: schema.eventSeats.label, seats: schema.eventSeats.seats, qty: schema.ticketOrderLines.qty, unitPrice: schema.ticketOrderLines.unitPrice })
     .from(schema.ticketOrderLines).innerJoin(schema.eventZones, eq(schema.eventZones.id, schema.ticketOrderLines.zoneId))
-    .leftJoin(schema.eventSeats, eq(schema.eventSeats.id, schema.ticketOrderLines.seatId)).where(eq(schema.ticketOrderLines.orderId, o.id));
+    .leftJoin(schema.eventSeats, eq(schema.eventSeats.id, schema.ticketOrderLines.seatId)).where(eq(schema.ticketOrderLines.orderId, o.id))
+    .orderBy(asc(schema.eventZones.sort), asc(schema.eventSeats.label));
+  /** `tickets` is how many people the line admits: a table admits one per seat. */
+  const lines = rows.map(({ seats, ...l }) => ({ ...l, tickets: l.kind === 'table' && l.seat ? Math.max(1, seats ?? 1) : l.qty }));
   let promo: string | null = null;
   if (o.promoCodeId) [{ code: promo }] = await db.select({ code: schema.promoCodes.code }).from(schema.promoCodes).where(eq(schema.promoCodes.id, o.promoCodeId));
   const tickets = o.status === 'paid'
-    ? (await db.select({ firstName: schema.tickets.firstName, lastName: schema.tickets.lastName, qrToken: schema.tickets.qrToken }).from(schema.tickets).where(eq(schema.tickets.orderId, o.id)))
-      .map((t) => ({ name: `${t.firstName} ${t.lastName}`.trim(), url: `${config.publicAppUrl}/t/${t.qrToken}` }))
+    ? (await db.select({ firstName: schema.tickets.firstName, lastName: schema.tickets.lastName, qrToken: schema.tickets.qrToken, zone: schema.eventZones.name, seat: schema.eventSeats.label })
+      .from(schema.tickets).innerJoin(schema.eventZones, eq(schema.eventZones.id, schema.tickets.zoneId)).leftJoin(schema.eventSeats, eq(schema.eventSeats.id, schema.tickets.seatId))
+      .where(eq(schema.tickets.orderId, o.id)).orderBy(asc(schema.eventZones.sort), asc(schema.eventSeats.label), asc(schema.tickets.lastName)))
+      .map((t) => ({ name: `${t.firstName} ${t.lastName}`.trim(), label: t.seat ? `Table ${t.seat}` : t.zone, url: `${config.publicAppUrl}/t/${t.qrToken}` }))
     : [];
   return {
     code: o.code, status: o.status, eventId: o.eventId, holdExpiresAt: o.holdExpiresAt,
