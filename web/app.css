@@ -478,3 +478,31 @@ body.guestmode{background:#e6ebf0}
 video.cam{width:100%;border-radius:16px;background:#05061a;aspect-ratio:1;object-fit:cover}
 .result-bad{background:#fde8e8;color:#8a1c1c;border-radius:16px;padding:18px;text-align:center}
 .result-bad h2{margin:6px 0}
+
+/* ---------- XTRA admin ---------- */
+.adm{display:grid;grid-template-columns:minmax(240px,320px) 1fr;gap:16px;align-items:start}
+.admlist{display:flex;flex-direction:column;gap:8px;position:sticky;top:0}
+.admv{all:unset;box-sizing:border-box;cursor:pointer;display:flex;flex-direction:column;gap:6px;padding:14px;border-radius:16px;background:var(--panel);border:2px solid transparent}
+.admv:hover{background:var(--panel2)}
+.admv.on{border-color:var(--ink);background:var(--bg)}
+.admv:focus-visible{outline:3px solid var(--sky);outline-offset:2px}
+.admh{display:flex;justify-content:space-between;gap:8px;align-items:center}
+.admv .tags{display:flex;flex-wrap:wrap;gap:4px}
+.admv .tag{margin:0}
+.admd{display:flex;flex-direction:column;gap:16px}
+.admtop{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
+.admtop h2{margin:0;font-size:26px;font-stretch:115%}
+.builtin{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin-bottom:12px}
+.builtin div{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border-radius:12px;background:var(--bg);font-size:14px}
+.builtin .mute{font-size:12px}
+.rolecard{display:flex;flex-direction:column;gap:10px;padding:14px;border-radius:14px;background:var(--bg);margin-top:10px;border:1.5px solid var(--line)}
+.roleh{display:flex;gap:8px;align-items:center}
+.roleh input{flex:1}
+.permgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:6px}
+.perm{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border-radius:10px;cursor:pointer;font-size:14px}
+.perm:hover{background:var(--panel)}
+.perm input{width:18px;height:18px;margin:2px 0 0;flex:none;accent-color:var(--ink)}
+.perm small{display:block;color:var(--mute);font-size:12px}
+.perm.off{opacity:.5}
+.rolesel{font:inherit;font-size:14px;padding:6px 8px;border-radius:10px;border:1.5px solid var(--line);background:var(--bg);color:inherit;max-width:180px}
+@media (max-width:900px){.adm{grid-template-columns:1fr}.admlist{position:static}}

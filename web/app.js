@@ -25,7 +25,8 @@ page:'<path d="M7 2.5h10a1 1 0 0 1 1 1v17a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-17a1 1 
 setup:'<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
 editor:'<path d="M3 21h18M5 17l10-10 3 3-10 10H5z"/><path d="M13 9l3 3"/>',
 wa:'<path d="M4 20l1.3-4A8 8 0 1 1 8 18.8z"/><path d="M9 9.2c0 3 2.6 5.6 5.8 5.8l1-1.4-2-1-1 .8a4 4 0 0 1-2.2-2.2l.8-1-1-2z" fill="currentColor" stroke="none"/>',
-mail:'<path d="M3 5h18v14H3z"/><path d="M3 6l9 7 9-7"/>'};
+mail:'<path d="M3 5h18v14H3z"/><path d="M3 6l9 7 9-7"/>',
+admin:'<path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/>'};
 const ic=(k,cls='')=>`<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[k]}</svg>`;
 
 /* ---------- furniture drawing ---------- */
@@ -108,7 +109,7 @@ function floorToLayout(items){
 function layoutToFloor(layout,areas){
   return layout.map((e,i)=>{const id=/^e\d+$/.test(e.id)?undefined:e.id,ref=e.id;
     if(e.kind==='zone'){const a=areas.find(a=>a.id===e.area)||{};return {id,ref,kind:'zone',label:a.name||'Area',x:e.x,y:e.y,w:Math.max(1,e.w),h:Math.max(1,e.h),minSpend:E2P(a.min),deposit:E2P(a.dep),sort:i}}
-    if(isT(e))return {id,ref,kind:e.kind==='sofa'||e.kind==='couch'?'sofa':'table',shape:e.kind,label:e.name||'T',x:e.x,y:e.y,w:1,h:1,rotation:e.rot||0,seats:e.seats,zoneRef:areaOf(e),sort:i};
+    if(isT(e))return {id,ref,kind:e.kind==='sofa'||e.kind==='couch'?'sofa':'table',shape:e.kind,label:e.name||'T',x:e.x,y:e.y,w:1,h:1,rotation:e.rot||0,seats:e.seats,zoneRef:areaOf2(e,layout,areas),sort:i};
     return {id,ref,kind:e.kind,label:e.name||'',x:e.x,y:e.y,w:Math.max(1,e.w),h:Math.max(1,e.h),rotation:e.rot||0,sort:i}})}
 const STARTER=()=>[zn('main',30,120,740,480),fx('bar','Bar',30,20,500,72),fx('dj','DJ',560,20,210,72),fx('entrance','Entrance',30,606,140,10),...[0,1,2,3,4,5].map(i=>mk('round','M'+(i+1),130+(i%3)*220,i<3?250:460,4))];
 
@@ -179,14 +180,15 @@ function campFrom(c){const k=c.segment?.key||'all';const when=c.sentAt||c.schedu
 async function loadVenue(vi,keepUI){
   const v0=ME.venues[vi],id=v0.id,u=p=>`/venues/${id}${p}`,today=nightYmd();
   DAYS=[0,1,2,3].map(i=>dparts(addDays(today,i)));DATE=new Date(today+'T12:00:00Z').toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',timeZone:'UTC'});
-  const role=ME.user.isSuperAdmin?'owner':v0.role,mgr=['owner','manager'].includes(role);
-  const safe=p=>p.catch(()=>[]);
+  const role=ME.user.isSuperAdmin?'owner':v0.role,P=v0.perms||[],F=v0.features||[],can=(...k)=>k.some(x=>P.includes(x));
+  const safe=p=>p.catch(()=>[]),none=Promise.resolve([]);
   const [venue,floor,menu,res,tabs,guests,tiersR,events,promos,camps,staff]=await Promise.all([
-    GET(u('')),GET(u('/floor')),GET(u('/menu')),GET(u(`/reservations?date=${today}&to=${addDays(today,3)}`)),
-    ['door'].includes(role)?[]:GET(u('/tabs')),mgr||role==='door'?GET(u('/guests')):Promise.resolve([]),GET(u('/tiers')),
-    mgr||role==='door'?safe(GET(u('/events'))):[],mgr?safe(GET(u('/promos'))):[],mgr?safe(GET(u('/campaigns'))):[],mgr?safe(GET(u('/staff'))):[]]);
+    GET(u('')),GET(u('/floor')),GET(u('/menu')),F.includes('reservations')&&can('floor','bookings','door')?GET(u(`/reservations?date=${today}&to=${addDays(today,3)}`)):none,
+    F.includes('ordering')&&can('floor','orders')?GET(u('/tabs')):none,can('guests','bookings','door','marketing','community')?safe(GET(u('/guests'))):none,GET(u('/tiers')),
+    F.includes('ticketing')&&can('events','door')?safe(GET(u('/events'))):none,can('events')?safe(GET(u('/promos'))):none,can('marketing')?safe(GET(u('/campaigns'))):none,can('staff')?safe(GET(u('/staff'))):none]);
+  const roles=can('staff')?await GET(u('/roles')).catch(()=>null):null;
   let items=floor;
-  if(!items.some(i=>i.kind==='zone')&&mgr){const L=STARTER();items=await PUT(u('/floor'),{items:layoutToFloor(L,[{id:'main',name:'Main floor',min:5000,dep:0}])})}
+  if(!items.some(i=>i.kind==='zone')&&can('editor')){const L=STARTER(),z0=L.find(e=>e.kind==='zone');z0.area=z0.id;items=await PUT(u('/floor'),{items:layoutToFloor(L,[{id:z0.id,name:'Main floor',min:5000,dep:0}])})}
   const {layout,areas}=floorToLayout(items);
   if(!areas.length)areas.push({id:'none',name:'Main floor',min:0,dep:0});
   VENUES[vi]={id,name:venue.name,where:venue.settings?.where||venue.address||'',color:venue.settings?.color||'#12153f',slug:venue.slug,role,raw:venue};
@@ -214,11 +216,10 @@ async function loadVenue(vi,keepUI){
   const evs=events.map(eventFrom);evs.forEach(e=>attachPromos(e,PR));
   const tonightEv=evs.filter(e=>e.status==='live');
   const tickets=(await Promise.all(tonightEv.map(e=>safe(GET(u(`/events/${e.id}/tickets`)))))).flat().map(t=>({id:t.id,code:t.orderCode,name:`${t.firstName} ${t.lastName}`.trim(),type:t.zone,in:!!t.checkedInAt}));
-  S={vi,bookings,guests:G2,orders,glist:[],tickets,events:evs,campaigns:camps.map(campFrom),staff,
+  S={vi,bookings,guests:G2,orders,glist:[],tickets,events:evs,campaigns:camps.map(campFrom),staff,roles,
     autos:[['remind','Booking reminder','WhatsApp 3 hours before the booking, with the QR pass'],['thanks','Thank you after the visit','Next day at 2 PM, thanks them for coming'],['bday','Birthday offer','7 days before their birthday, invites them back'],['winback','Win back','After 45 days without a visit, invites them to come back']].map(([k,name,desc])=>({k,name,desc,on:!!cfg.autos[k],n:0})),
     bfilter:'request',otable:null,cat:Object.keys(MENU)[0]||null,pay:'Card',gsearch:'',dsearch:'',sheet:null,sel:null,mapMode:'map',gp:newGP(),evSel:null,evp:newEVP(),camp:null,batchOpen:null,edEvent:null,
     ...(ui?{bfilter:ui.bfilter,otable:ui.otable,cat:MENU[ui.cat]?ui.cat:Object.keys(MENU)[0]||null,pay:ui.pay,gsearch:ui.gsearch,dsearch:ui.dsearch,sheet:ui.sheet,sel:ui.sel,gp:ui.gp,evSel:ui.evSel,evp:ui.evp,camp:ui.camp,batchOpen:ui.batchOpen,edEvent:ui.edEvent,sales:ui.sales}:{})};
-  ROLE=role==='door'?'door':role==='waiter'?'waiter':'manager';
   // Keep the booking page preview in step with the venue.
   PUB=null;
 }
@@ -250,13 +251,18 @@ const egp2=n=>'EGP'+NB+(Math.round(n*100)/100).toLocaleString('en-US',{maximumFr
 const first=b=>G(b.gid).name.split(' ')[0];
 
 /* ---------- shell ---------- */
-const NAV=[['floor','Floor',['manager','waiter','door'],'Tonight'],['bookings','Bookings',['manager','door'],'Tonight'],['door','Door',['manager','door'],'Tonight'],['orders','Orders',['manager','waiter'],'Tonight'],['events','Events',['manager'],'Grow'],['marketing','Marketing',['manager'],'Grow'],['guests','Guests',['manager'],'Grow'],['community','Community',['manager'],'Grow'],['page','Booking page',['manager'],'Set up'],['editor','Floor map',['manager'],'Set up'],['setup','Venue setup',['manager'],'Set up']];
+const NAV=[['floor','Floor','floor','Tonight'],['bookings','Bookings','bookings','Tonight'],['door','Door','door','Tonight'],['orders','Orders','orders','Tonight'],['events','Events','events','Grow'],['marketing','Marketing','marketing','Grow'],['guests','Guests','guests','Grow'],['community','Community','community','Grow'],['page','Booking page','page','Set up'],['editor','Floor map','editor','Set up'],['setup','Venue setup','setup','Set up'],['admin','XTRA admin','admin','XTRA']];
+/** What this person may open at the current venue (from /auth/me, already limited by the venue's features). */
+const PERMS_NOW=()=>ME.venues[S.vi]?.perms||[],FEAT_NOW=()=>ME.venues[S.vi]?.features||[];
+const CAN=p=>p==='admin'?!!ME.user.isSuperAdmin:p==='page'?PERMS_NOW().includes('setup')&&FEAT_NOW().includes('reservations'):PERMS_NOW().includes(p);
+const HAS=f=>FEAT_NOW().includes(f);
 const ROLES={manager:'Manager',door:'Door',waiter:'Waiter'};
 const ROLE_NAME={owner:'Owner',manager:'Manager',door:'Door',waiter:'Waiter'};
-const whoBox=()=>`<div class="role">Signed in</div><div class="who"><b>${esc(ME.user.name)}</b><span class="mute">${esc(ME.user.isSuperAdmin?'XTRA admin':ROLE_NAME[VENUES[S.vi].role]||'')}</span></div><button class="btn ghost sm" data-a="signout">Sign out</button>`;
-const MORE=['events','marketing','community','page','editor','setup'];
+const whoBox=()=>`<div class="role">Signed in</div><div class="who"><b>${esc(ME.user.name)}</b><span class="mute">${esc(ME.user.isSuperAdmin?'XTRA admin':ME.venues[S.vi]?.roleName||ROLE_NAME[VENUES[S.vi].role]||'')}</span></div><button class="btn ghost sm" data-a="signout">Sign out</button>`;
+const MORE=['events','marketing','community','page','editor','setup','admin'];
 function shell(){
-  const VV=VENUES[S.vi],navs=NAV.filter(n=>n[2].includes(ROLE));
+  const VV=VENUES[S.vi],navs=NAV.filter(n=>CAN(n[2]));ROLE=navs.length>5?'manager':'staff';
+  if(!navs.length){$('#rail').innerHTML=`${LOGO}<div class="sp"></div>${whoBox()}`;$('#tabs').innerHTML='';$('#mbar').innerHTML=LOGO;return}
   if(!navs.find(n=>n[0]===VIEW))VIEW=navs[0][0];
   const btn=([k,l])=>`<button class="nav ${VIEW===k?'on':''}" data-a="go" data-v="${k}" ${VIEW===k?'aria-current="page"':''}>${ic(k)}<span>${l}</span>${k==='bookings'&&reqCount()?`<span class="ct">${reqCount()}</span>`:''}</button>`;
   $('#rail').innerHTML=`${LOGO}<button class="venue" data-a="venue" title="Switch venue"><b>${esc(VV.name)}</b><span>${esc(VV.where)} · switch</span></button>${navs.map((n,i)=>(ROLE==='manager'&&(i===0||navs[i-1][3]!==n[3])?`<div class="ngrp">${n[3]}</div>`:'')+btn(n)).join('')}<div class="sp"></div>${whoBox()}`;
@@ -297,7 +303,7 @@ function vFloor(){
   const covers=S.bookings.filter(b=>['arrived','seated'].includes(b.status)).reduce((s,b)=>s+b.party,0);
   const next=S.bookings.filter(b=>['confirmed','accepted','request'].includes(b.status)).slice(0,6);
   const lg=['free','held','booked','arrived','seated','bill'];
-  return head('Tonight',DATE+' · doors '+t12(CFG().first),ROLE==='manager'?`<button class="btn ghost" data-a="go" data-v="editor">${ic('editor')}Edit floor map</button>`:'')+
+  return head('Tonight',DATE+' · doors '+t12(CFG().first),CAN('editor')?`<button class="btn ghost" data-a="go" data-v="editor">${ic('editor')}Edit floor map</button>`:'')+
   `<div class="kpis"><div class="kpi"><b class="num">${covers}</b><span>guests in</span></div><div class="kpi"><b class="num">${(counts.seated||0)+(counts.bill||0)}/${T.length}</b><span>tables seated</span></div><div class="kpi"><b class="num">${egp(spend)}</b><span>open orders</span></div><div class="kpi"><b class="num">${reqCount()}</b><span>in review</span></div></div>
   <div class="floorwrap"><div><div class="map" id="map"></div><div class="legend">${lg.map(k=>`<span><i style="background:${SFILL[k]};${k==='free'?'box-shadow:inset 0 0 0 1.5px var(--chairline)':''}"></i>${STL[k]} <b class="num">${counts[k]||0}</b></span>`).join('')}</div></div>
   <div class="side bigbox"><h3>Next up</h3><div class="list">${next.map(b=>`<button class="row" data-a="booking" data-v="${b.id}"><span class="t">${t12(b.time).split(NB)[0]}<small>${b.table?TN(b.table):'no table'}</small></span><span><span class="n">${esc(G(b.gid).name)}</span><span class="s">${gN(b.party)} · ${esc(AR(b.area).name)}</span></span>${pillFor(b.status)}</button>`).join('')||'<div class="empty">Nobody else expected.</div>'}</div></div></div>`;
@@ -553,12 +559,12 @@ function vSetup(){
   <div class="bigbox"><h3>Booking page</h3><div class="two" style="margin:10px 0 12px"><label class="f">Venue name<input data-vset="name" value="${esc(VENUES[S.vi].name)}" autocomplete="off"></label><label class="f">Location<input data-vset="where" value="${esc(VENUES[S.vi].where)}" placeholder="Zamalek, Cairo" autocomplete="off"></label></div><div class="logorow">${c.logo?`<img src="${c.logo}" alt="Venue logo" class="vlogo">`:`<span class="vlogo mono">${esc(VENUES[S.vi].name.split(' ').map(w=>w[0]).join('').slice(0,2))}</span>`}<label class="btn ghost sm" style="cursor:pointer">${c.logo?'Change logo':'Upload logo'}<input type="file" id="logofile" accept="image/*" hidden></label>${c.logo?'<button class="btn ghost sm" data-a="nologo">Remove</button>':''}</div><div class="stack" style="margin-top:10px">${Object.keys(c.socials).map(k=>`<label class="f">${k}<input data-social="${k}" value="${esc(c.socials[k])}" placeholder="${k.toLowerCase()}.com/yourvenue" autocomplete="off"></label>`).join('')}</div>${tg('askNames',c.askNames,"Ask for every guest's name",'Guests list who is coming with them')}${tg('mapPick',c.mapPick,'Seat map on the booking page','Guests see your floor map and pick a free table. Off: they pick an area and you choose the table.')}<div class="conn"><div style="min-width:0"><b>Your booking link</b><div class="mute" style="font-size:14px;overflow-wrap:anywhere"><a href="${link}" target="_blank" rel="noopener" style="color:inherit">${esc(link)}</a></div></div></div></div>
   <div class="bigbox"><h3>Ticket fees</h3><p class="mute" style="font-size:14px;margin:4px 0 0">Added on top of the ticket price at checkout. VAT is charged on the fees only.</p>${ME.user.isSuperAdmin?`<div class="two" style="margin-top:12px"><label class="f">Booking fee %<input type="number" min="0" max="50" step="0.5" data-fee="feePct" value="${c.feePct??5}" inputmode="decimal"></label><label class="f">VAT on fees %<input type="number" min="0" max="30" step="0.5" data-fee="vatPct" value="${c.vatPct??14}" inputmode="decimal"></label></div><p class="mute" style="font-size:13px;margin:8px 0 0">You are an XTRA admin: this applies to every venue.</p>`:`<div class="conn"><div><b>Booking fee</b></div><b class="num">${c.feePct}%</b></div><div class="conn"><div><b>VAT on fees</b></div><b class="num">${c.vatPct}%</b></div><p class="mute" style="font-size:13px;margin:8px 0 0">Set by XTRA.</p>`}<p class="mute num" style="font-size:14px;margin:10px 0 0">Example: a ${egp(1000)} ticket pays ${egp(Math.round(1000*(c.feePct??5)/100))} fees + ${egp(Math.round(1000*(c.feePct??5)/100*(c.vatPct??14)/100))} VAT = ${egp(1000+Math.round(1000*(c.feePct??5)/100)+Math.round(1000*(c.feePct??5)/100*(c.vatPct??14)/100))}</p></div>
   <div class="bigbox"><h3>Payments and messages</h3>${[['paymob','Paymob','Cards, Meeza, wallets, InstaPay, valU'],['whatsapp','WhatsApp Business','Requests, confirmations, passes, campaigns'],['email','Email','Booking and ticket emails in your venue name'],['googleWallet','Google Wallet','Add to Google Wallet on tickets']].map(([k,l,d])=>`<div class="conn"><div><b>${l}</b><div class="mute" style="font-size:14px">${d}</div></div><span class="pill ${LIVE_INT[k]?'p-arrived':'p-pending'}">${LIVE_INT[k]?'Live':'Test mode'}</span></div>`).join('')}<p class="mute" style="font-size:13px;margin:10px 0 0">Test mode: payments open a test checkout and messages are saved, not sent. XTRA connects the live accounts.</p></div>
-  <div class="bigbox"><h3>Staff</h3>${S.staff.map(m=>`<div class="conn"><div><b>${esc(m.name)}</b><div class="mute" style="font-size:14px">${esc(m.email)}</div></div><span class="pill p-free">${ROLE_NAME[m.role]}</span></div>`).join('')||'<div class="empty">No staff yet.</div>'}
-  <h3 style="margin-top:18px">Add staff</h3><form id="addstaff" class="stack" style="margin-top:8px"><div class="two"><label class="f">Name<input id="sname" required minlength="2" autocomplete="off"></label><label class="f">Role<select id="srole"><option value="waiter">Waiter: floor and orders</option><option value="door">Door: door and bookings</option><option value="manager">Manager: everything</option></select></label></div><div class="two"><label class="f">Email<input id="semail" type="email" required autocomplete="off"></label><label class="f">Password<input id="spass" type="text" required minlength="8" autocomplete="off" placeholder="At least 8 characters"></label></div><button class="btn sm" type="submit">Add staff</button></form></div></div>`;
+  ${CAN('staff')?`<div class="bigbox"><h3>Staff</h3>${S.staff.map(m=>`<div class="conn"><div><b>${esc(m.name)}</b><div class="mute" style="font-size:14px">${esc(m.email)}</div></div>${roleSelect(m)}</div>`).join('')||'<div class="empty">No staff yet.</div>'}
+  <h3 style="margin-top:18px">Add staff</h3><form id="addstaff" class="stack" style="margin-top:8px"><div class="two"><label class="f">Name<input id="sname" required minlength="2" autocomplete="off"></label><label class="f">Role<select id="srole">${roleOptions(S.roles,'waiter')}</select></label></div><div class="two"><label class="f">Email<input id="semail" type="email" required autocomplete="off"></label><label class="f">Password<input id="spass" type="text" required minlength="8" autocomplete="off" placeholder="At least 8 characters"></label></div><button class="btn sm" type="submit">Add staff</button></form></div>`:''}</div>`;
 }
 
 /* ---------- render ---------- */
-function render(){if(GUEST){const g=document.querySelector('#guest .gscroll'),st=g?.scrollTop;$('#guest').innerHTML=guestView();const g2=document.querySelector('#guest .gscroll');if(st&&g2)g2.scrollTop=st;return}if(!S||!ME)return;shell();const VW={floor:vFloor,bookings:vBookings,door:vDoor,orders:vOrders,guests:vGuests,page:vPage,setup:vSetup,editor:vEditor,events:vEvents,marketing:vMarketing,community:vCommunity}[VIEW];const gs=$('#gscroll')?.scrollTop;$('#main').innerHTML=VW();drawMap();if(gs&&$('#gscroll'))$('#gscroll').scrollTop=gs;if(S.sheet)openSheet(S.sheet,true)}
+function render(){if(!GUEST&&S&&ME&&!NAV.some(n=>CAN(n[2]))){shell();$('#main').innerHTML='<div class="loading">Your role has no screens at this venue yet. Ask your manager to give it some.</div>';return}if(GUEST){const g=document.querySelector('#guest .gscroll'),st=g?.scrollTop;$('#guest').innerHTML=guestView();const g2=document.querySelector('#guest .gscroll');if(st&&g2)g2.scrollTop=st;return}if(!S||!ME)return;shell();const VW={floor:vFloor,bookings:vBookings,door:vDoor,orders:vOrders,guests:vGuests,page:vPage,setup:vSetup,editor:vEditor,events:vEvents,marketing:vMarketing,community:vCommunity,admin:vAdmin}[VIEW];const gs=$('#gscroll')?.scrollTop;$('#main').innerHTML=VW();drawMap();if(gs&&$('#gscroll'))$('#gscroll').scrollTop=gs;if(S.sheet)openSheet(S.sheet,true)}
 
 /* ---------- sheets ---------- */
 function qrSVG(txt){try{const q=qrcode(0,'M');q.addData(txt);q.make();const n=q.getModuleCount();let p='';for(let r=0;r<n;r++)for(let c=0;c<n;c++)if(q.isDark(r,c))p+=`M${c} ${r}h1v1h-1z`;return `<svg viewBox="0 0 ${n} ${n}" shape-rendering="crispEdges"><path d="${p}" fill="#12153f"/></svg>`}catch(e){return `<div style="width:132px;height:132px;display:grid;place-items:center;color:#12153f;font-weight:800;line-height:1.2">${esc(txt)}</div>`}}
@@ -601,9 +607,9 @@ function openSheet(d,refresh){
     <div class="conn"><div><b>Offers on WhatsApp</b><div class="mute" style="font-size:14px">${g.consent?'Agreed on the booking page':'Has not agreed. We will not send offers.'}</div></div><span class="pill ${g.consent?'p-arrived':'p-free'}">${g.consent?'Yes':'No'}</span></div>
     ${hist.length?`<h3 style="margin-top:16px">Bookings</h3>${hist.map(b=>`<div class="conn"><span>${dayStr(b.day)} · ${t12(b.time)} · ${gN(b.party)}</span>${pillFor(b.status)}</div>`).join('')}`:''}`}
   if(d.k==='scan'){title='Scan pass';body=d.res?scanResult(d.res):`<video class="cam" id="cam" playsinline muted></video><p class="mute" style="text-align:center;margin:8px 0" id="camhint">Hold the QR inside the frame</p><form id="scanform" class="scanin"><input class="search" style="margin:0" id="scancode" placeholder="Or paste the pass link" autocomplete="off"><button class="btn sm" type="submit">Check</button></form>`;if(!d.res&&!refresh)setTimeout(startCam,60)}
-  if(d.k==='more'){title='More';body=`<div class="stack" style="margin-top:0">${ROLE==='manager'?NAV.filter(n=>MORE.includes(n[0])).map(([k,l])=>`<button class="btn ghost wide" style="justify-content:flex-start" data-a="go" data-v="${k}">${ic(k)}${l}</button>`).join(''):''}<div style="margin-top:12px">${whoBox()}</div></div>`}
-  if(d.k==='venue'){title='Your venues';body=`<p class="mute" style="margin:0 0 12px">One XTRA account, many venues. Each has its own floor map, slots, staff and booking link.</p><div class="stack" style="margin-top:0">${ME.venues.map((v,i)=>`<button class="btn ${i===S.vi?'':'ghost'} wide" style="justify-content:space-between" data-a="setvenue" data-v="${i}"><span>${esc(v.name)}</span><span style="font-weight:400;opacity:.8">${esc(ROLE_NAME[v.role]||'')}</span></button>`).join('')}</div>
-    ${ME.user.isSuperAdmin?`<h3 style="margin-top:22px">Add a venue</h3><form id="addvenue" class="stack" style="margin-top:8px"><label class="f">Venue name<input id="vname" required minlength="2" autocomplete="off" placeholder="Saba Lounge"></label><label class="f">Owner name<input id="voname" required minlength="2" autocomplete="off"></label><label class="f">Owner email<input id="voemail" type="email" required autocomplete="off"></label><label class="f">Owner password<input id="vopass" type="text" required minlength="8" autocomplete="off" placeholder="At least 8 characters"></label><button class="btn" type="submit">Create venue</button></form>`:''}`}
+  if(d.k==='more'){title='More';body=`<div class="stack" style="margin-top:0">${ROLE==='manager'?NAV.filter(n=>MORE.includes(n[0])&&CAN(n[2])).map(([k,l])=>`<button class="btn ghost wide" style="justify-content:flex-start" data-a="go" data-v="${k}">${ic(k)}${l}</button>`).join(''):''}<div style="margin-top:12px">${whoBox()}</div></div>`}
+  if(d.k==='venue'){title='Your venues';body=`<p class="mute" style="margin:0 0 12px">One XTRA account, many venues. Each has its own floor map, slots, staff and booking link.</p><div class="stack" style="margin-top:0">${ME.venues.map((v,i)=>`<button class="btn ${i===S.vi?'':'ghost'} wide" style="justify-content:space-between" data-a="setvenue" data-v="${i}"><span>${esc(v.name)}</span><span style="font-weight:400;opacity:.8">${esc(ME.user.isSuperAdmin?(v.active===false?'Paused':''):v.roleName||ROLE_NAME[v.role]||'')}</span></button>`).join('')}</div>
+    ${ME.user.isSuperAdmin?`<button class="btn ghost wide" style="margin-top:16px" data-a="go" data-v="admin">${ic('admin')}New venue, roles and accounts in XTRA admin</button>`:''}`}
   if(!title){const r=growthSheet(d);if(r){title=r[0];body=r[1]}}
   const sh=$('#sheet'),st=sh.querySelector('.bd')?.scrollTop||0;
   sh.innerHTML=`<div class="hd"><h2 id="sheetTitle">${title}</h2><button class="x" data-a="close" aria-label="Close">×</button></div><div class="bd">${body}</div>`;
@@ -717,9 +723,9 @@ document.addEventListener('submit',async e=>{e.preventDefault();const f=e.target
   if(f.id==='walkin'){const tid=$('#wtable').value,t=EL(tid),party=+$('#wparty').textContent,name=val('wname')||'Walk-in '+t.name,phone=val('wphone').replace(/[^\d+]/g,'');
     const r=await act(()=>POST(vurl('/tabs'),{tableId:tid,guestName:name,partySize:party,...(phone.length>=10?{phone}:{})}),`${name} seated at ${t.name}`);if(r)openSheet({k:'table',id:tid})}
   if(f.id==='scanform'){const raw=val('scancode'),token=raw.split('/').pop();if(token)doScan(token)}
-  if(f.id==='addstaff')await act(()=>POST(vurl('/staff'),{name:val('sname'),email:val('semail'),password:val('spass'),role:$('#srole').value}),'Staff added. Share the email and password with them.');
-  if(f.id==='addvenue'){const r=await act(()=>POST('/admin/venues',{name:val('vname'),owner:{name:val('voname'),email:val('voemail'),password:val('vopass')}}),'Venue created',{reload:false});
-    if(r){ME=await GET('/auth/me');const i=ME.venues.findIndex(x=>x.id===r.venue.id);closeSheet();if(i>=0)ACT.setvenue(i)}}
+  if(f.id==='addstaff')await act(()=>POST(vurl('/staff'),{name:val('sname'),email:val('semail'),password:val('spass'),...roleValue($('#srole').value)}),'Staff added. Share the email and password with them.');
+  if(f.id==='addvenue'){const feats=[...f.querySelectorAll('[name=vfeat]:checked')].map(x=>x.value);const r=await act(()=>POST('/admin/venues',{name:val('vname'),features:feats,owner:{name:val('voname'),email:val('voemail'),password:val('vopass')}}),r=>`${r.venue.name} created. Share the owner's email and password with them.`,{reload:false});
+    if(r){ME=await GET('/auth/me');closeSheet();VIEW='admin';await admLoad(r.venue.id)}}
   if(f.id==='slogin'){const err=$('#lerr');err.textContent='';try{const r=await api('POST','/auth/login',{email:val('lemail'),password:$('#lpass').value},null);TOKEN=r.token;store.set('xtra.staff',TOKEN);await bootStaff()}catch(x){err.textContent=x.message}}
 });
 document.addEventListener('input',e=>{const el=e.target;if(!S&&!PUB)return;
@@ -1128,6 +1134,73 @@ async function bootGuest(path){
   }catch(e){GUEST.err=e.status===404?'This link is not valid any more.':e.message}
   render()}
 
+
+/* ================= XTRA admin: venues, features, roles, accounts ================= */
+const FEAT_INFO=[['reservations','Reservations','Booking page, bookings, door check-in'],['ordering','Ordering and bills','Orders by table, bills with minimum spend'],['ticketing','Tickets and events','Ticket pages, seat maps, promo codes'],['marketing','Marketing','WhatsApp and email campaigns, automatic messages'],['guests','Guest list','Guest profiles, notes and tags'],['community','Community','Member tiers, points and perks']];
+const PERM_INFO=[['floor','Floor','Tonight\'s map and tables'],['bookings','Bookings','Accept, decline and add bookings'],['door','Door','Scan passes and tickets, check guests in'],['orders','Orders and bills','Take orders, close bills'],['events','Events','Events, ticket prices, promo codes'],['marketing','Marketing','Send campaigns'],['guests','Guests','Guest list, notes and tags'],['community','Community','Tiers and points'],['editor','Floor map','Draw and change the floor map'],['setup','Venue setup','Slots, areas, booking page, logo'],['staff','Staff and roles','Add staff, make roles']];
+const PERM_FEAT={bookings:'reservations',door:'reservations',orders:'ordering',events:'ticketing',marketing:'marketing',guests:'guests',community:'community'};
+const BUILTIN=[['owner','Owner'],['manager','Manager'],['door','Door'],['waiter','Waiter']];
+/** Options for a role picker: built-in roles, then the venue's own roles (value "r:<id>"). */
+function roleOptions(R,cur){const own=(R?.roles||[]);
+  return BUILTIN.filter(([k])=>k!=='owner'||cur==='owner'||ME.user.isSuperAdmin||VENUES[S.vi]?.role==='owner').map(([k,l])=>`<option value="${k}" ${cur===k?'selected':''}>${l}${R?.builtIn?': '+R.builtIn[k].length+' screens':''}</option>`).join('')
+  +(own.length?`<optgroup label="This venue's roles">${own.map(r=>`<option value="r:${r.id}" ${cur==='r:'+r.id?'selected':''}>${esc(r.name)}</option>`).join('')}</optgroup>`:'')}
+const roleValue=v=>v.startsWith('r:')?{roleId:v.slice(2)}:{role:v};
+const roleKey=m=>m.roleId?'r:'+m.roleId:m.role;
+function roleSelect(m,vid){const mine=m.userId===ME.user.id;
+  return mine?`<span class="pill p-free">${esc(m.roleName||ROLE_NAME[m.role])} · you</span>`:`<span style="display:flex;gap:6px;align-items:center"><select class="rolesel" data-staffrole="${vid||''}:${m.userId}" aria-label="Role for ${esc(m.name)}">${roleOptions(vid?ADM.roles:S.roles,roleKey(m))}</select><button class="chip" data-a="staffdel" data-v="${vid||''}:${m.userId}" aria-label="Remove ${esc(m.name)}">Remove</button></span>`}
+
+const ADM={venues:null,sel:null,roles:null,staff:null,busy:false,newRole:null};
+async function admLoad(sel){try{ADM.venues=await GET('/admin/venues');ADM.sel=sel||ADM.sel||ADM.venues[0]?.id||null;if(ADM.sel)await admLoadVenue();render()}catch(e){toast(e.message)}}
+async function admLoadVenue(){const id=ADM.sel;const [r,st]=await Promise.all([GET(`/venues/${id}/roles`),GET(`/venues/${id}/staff`)]);if(ADM.sel===id){ADM.roles=r;ADM.staff=st}}
+const featChips=v=>FEAT_INFO.filter(([k])=>v.features.includes(k)).map(([,l])=>`<span class="tag">${l}</span>`).join('')||'<span class="mute" style="font-size:13px">No modules</span>';
+function permGrid(sel,attr,features){return `<div class="permgrid">${PERM_INFO.map(([k,l,d])=>{const off=PERM_FEAT[k]&&!features.includes(PERM_FEAT[k]);return `<label class="perm ${off?'off':''}"><input type="checkbox" ${attr}="${k}" ${sel.includes(k)?'checked':''}><span><b>${l}</b><small>${off?'Module is off for this venue':d}</small></span></label>`}).join('')}</div>`}
+function vAdmin(){
+  if(!ME.user.isSuperAdmin)return head('XTRA admin','Only XTRA admins can open this.');
+  if(!ADM.venues){admLoad();return head('XTRA admin','Loading…')}
+  const V2=ADM.venues.find(v=>v.id===ADM.sel),R=ADM.roles;
+  const list=`<div class="admlist">${ADM.venues.map(v=>`<button class="admv ${v.id===ADM.sel?'on':''}" data-a="admsel" data-v="${v.id}"><span class="admh"><b>${esc(v.name)}</b>${v.active?'':'<span class="pill p-pending">Paused</span>'}</span><span class="mute" style="font-size:13px">${esc(v.owners.map(o=>o.email).join(', ')||'No owner')} · ${v.staffCount} account${v.staffCount===1?'':'s'}</span><span class="tags">${featChips(v)}</span></button>`).join('')||'<div class="empty">No venues yet.</div>'}</div>`;
+  let detail='<div class="bigbox empty">Pick a venue.</div>';
+  if(V2){
+    const feats=`<div class="bigbox"><h3>Modules</h3><p class="mute" style="font-size:14px;margin:4px 0 4px">What ${esc(V2.name)} pays for. Turned off modules disappear from their screens and their guest pages.</p>${FEAT_INFO.map(([k,l,d])=>{const on=V2.features.includes(k);return `<div class="conn"><div><b>${l}</b><div class="mute" style="font-size:14px">${d}</div></div><button class="toggle ${on?'on':''}" data-a="admfeat" data-v="${k}" role="switch" aria-checked="${on}" aria-label="${l}"></button></div>`}).join('')}
+      <div class="conn"><div><b>Venue is live</b><div class="mute" style="font-size:14px">Paused venues can't sign in and their pages are closed.</div></div><button class="toggle ${V2.active?'on':''}" data-a="admactive" role="switch" aria-checked="${V2.active}" aria-label="Venue is live"></button></div></div>`;
+    const roles=!R?'<div class="bigbox">Loading…</div>':`<div class="bigbox"><h3>Roles</h3><p class="mute" style="font-size:14px;margin:4px 0 10px">Pick exactly which screens each role opens. Built-in roles stay as they are.</p>
+      <div class="builtin">${BUILTIN.map(([k,l])=>`<div><b>${l}</b><span class="mute">${R.builtIn[k].length===PERM_INFO.length?'Everything':R.builtIn[k].map(p=>PERM_INFO.find(x=>x[0]===p)[1]).join(', ')}</span></div>`).join('')}</div>
+      ${R.roles.map(r=>`<div class="rolecard"><div class="roleh"><input class="search" style="margin:0;font-weight:700" data-rolename="${r.id}" value="${esc(r.name)}" aria-label="Role name" maxlength="40"><span class="mute" style="font-size:13px;white-space:nowrap">${r.staff} ${r.staff===1?'person':'people'}</span><button class="chip" data-a="roledel" data-v="${r.id}">Delete</button></div>${permGrid(r.permissions,`data-roleperm="${r.id}" data-p`,V2.features)}</div>`).join('')}
+      ${ADM.newRole?`<form id="newrole" class="rolecard"><div class="roleh"><input class="search" style="margin:0;font-weight:700" id="nrname" required minlength="2" maxlength="40" placeholder="Role name, like Host or Cashier" autocomplete="off"></div>${permGrid(ADM.newRole,'data-np',V2.features)}<div style="display:flex;gap:8px"><button class="btn sm" type="submit">Save role</button><button class="btn ghost sm" type="button" data-a="rolecancel">Cancel</button></div></form>`:`<button class="btn ghost sm" data-a="roleadd" style="margin-top:6px">+ New role</button>`}</div>`;
+    const accts=!ADM.staff?'<div class="bigbox">Loading…</div>':`<div class="bigbox"><h3>Accounts</h3><p class="mute" style="font-size:14px;margin:4px 0 6px">Everyone who signs in to ${esc(V2.name)}.</p>${ADM.staff.map(m=>`<div class="conn"><div style="min-width:0"><b>${esc(m.name)}</b><div class="mute" style="font-size:14px;overflow-wrap:anywhere">${esc(m.email)}</div></div>${roleSelect(m,V2.id)}</div>`).join('')||'<div class="empty">No accounts yet.</div>'}
+      <h3 style="margin-top:18px">Add an account</h3><form id="admstaff" class="stack" style="margin-top:8px"><div class="two"><label class="f">Name<input id="asname" required minlength="2" autocomplete="off"></label><label class="f">Role<select id="asrole">${roleOptions(R,'manager')}</select></label></div><div class="two"><label class="f">Email<input id="asemail" type="email" required autocomplete="off"></label><label class="f">Password<input id="aspass" type="text" required minlength="8" autocomplete="off" placeholder="At least 8 characters"></label></div><button class="btn sm" type="submit">Add account</button></form></div>`;
+    const i=ME.venues.findIndex(v=>v.id===V2.id);
+    detail=`<div class="admd"><div class="admtop"><div><h2>${esc(V2.name)}</h2><span class="mute">${esc(location.host)}/book/${esc(V2.slug)}</span></div>${i>=0&&i!==S.vi?`<button class="btn ghost sm" data-a="setvenue" data-v="${i}">Open this venue</button>`:''}</div>${feats}${roles}${accts}</div>`;
+  }
+  return head('XTRA admin','Venues on XTRA: what each one has, its roles and its accounts.',`<button class="btn" data-a="admnew">New venue</button>`)+`<div class="adm">${list}${detail}</div>`;
+}
+const admPatch=async b=>{const r=await act(()=>PATCH(`/admin/venues/${ADM.sel}`,b),null,{reload:false});if(r){Object.assign(ADM.venues.find(v=>v.id===ADM.sel),r);ME=await GET('/auth/me');render()}return r};
+const ADMACT={
+admsel:v=>{ADM.sel=v;ADM.roles=null;ADM.staff=null;ADM.newRole=null;render();admLoadVenue().then(render).catch(e=>toast(e.message))},
+admfeat:v=>{const V2=ADM.venues.find(x=>x.id===ADM.sel),on=!V2.features.includes(v),f=on?[...V2.features,v]:V2.features.filter(x=>x!==v);admPatch({features:FEAT_INFO.map(x=>x[0]).filter(k=>f.includes(k))}).then(r=>{if(r){toast(`${FEAT_INFO.find(x=>x[0]===v)[1]} ${on?'on':'off'} for ${r.name}`);if(r.id===VENUES[S.vi].id)refresh()}})},
+admactive:()=>{const V2=ADM.venues.find(x=>x.id===ADM.sel);admPatch({active:!V2.active}).then(r=>r&&toast(r.active?`${r.name} is live`:`${r.name} is paused`))},
+admnew:()=>openSheet({k:'newvenue'}),
+roleadd:()=>{ADM.newRole=['floor'];render()},
+rolecancel:()=>{ADM.newRole=null;render()},
+roledel:v=>{const r=ADM.roles.roles.find(x=>x.id===v);act(()=>DEL(`/venues/${ADM.sel}/roles/${v}`),`${r.name} deleted`,{reload:false}).then(x=>{if(x)admLoadVenue().then(render)})},
+staffdel:v=>{const [vid,uid]=v.split(':'),venue=vid||VENUES[S.vi].id,L=vid?ADM.staff:S.staff,m=L.find(x=>x.userId===uid);
+  act(()=>DEL(`/venues/${venue}/staff/${uid}`),`${m.name} removed`,{reload:!vid}).then(x=>{if(x&&vid)admLoad()})}
+};
+Object.assign(ACT,ADMACT);
+const _goAct=ACT.go;ACT.go=v=>{if(v==='admin'){ADM.venues=null}_goAct(v)};
+document.addEventListener('change',async e=>{const el=e.target;if(!S||!ME)return;
+  if(el.dataset.staffrole){const [vid,uid]=el.dataset.staffrole.split(':'),venue=vid||VENUES[S.vi].id;const r=await act(()=>PATCH(`/venues/${venue}/staff/${uid}`,roleValue(el.value)),m=>`${m.name} is now ${m.roleName||ROLE_NAME[m.role]}`,{reload:!vid});if(vid){await admLoad()}else if(!r)render()}
+  if(el.dataset.roleperm){const id=el.dataset.roleperm,r=ADM.roles.roles.find(x=>x.id===id),k=el.dataset.p;r.permissions=el.checked?[...r.permissions,k]:r.permissions.filter(x=>x!==k);later('role'+id,()=>PATCH(`/venues/${ADM.sel}/roles/${id}`,{permissions:r.permissions}).then(()=>toast(`${r.name} saved`)),500)}
+  if(el.dataset.rolename){const id=el.dataset.rolename,r=ADM.roles.roles.find(x=>x.id===id),n=el.value.trim();if(n.length>=2){r.name=n;later('rolen'+id,()=>PATCH(`/venues/${ADM.sel}/roles/${id}`,{name:n}).then(()=>toast('Role renamed')),300)}}
+  if(el.dataset.np){const k=el.dataset.np;ADM.newRole=el.checked?[...ADM.newRole,k]:ADM.newRole.filter(x=>x!==k)}
+});
+document.addEventListener('submit',async e=>{const f=e.target;if(!S||!ME)return;
+  if(f.id==='newrole'){e.preventDefault();const r=await act(()=>POST(`/venues/${ADM.sel}/roles`,{name:val('nrname'),permissions:ADM.newRole}),r=>`${r.name} role saved`,{reload:false});if(r){ADM.newRole=null;await admLoadVenue();render()}}
+  if(f.id==='admstaff'){e.preventDefault();const r=await act(()=>POST(`/venues/${ADM.sel}/staff`,{name:val('asname'),email:val('asemail'),password:val('aspass'),...roleValue($('#asrole').value)}),'Account added. Share the email and password with them.',{reload:false});if(r)await admLoad()}
+});
+const _growthSheet=growthSheet;
+growthSheet=d=>{if(d.k==='newvenue')return ['New venue',`<form id="addvenue" class="stack" style="margin-top:0"><label class="f">Venue name<input id="vname" required minlength="2" autocomplete="off" placeholder="Saba Lounge"></label><h3 style="margin-top:6px">Owner account</h3><label class="f">Owner name<input id="voname" required minlength="2" autocomplete="off"></label><label class="f">Owner email<input id="voemail" type="email" required autocomplete="off"></label><label class="f">Owner password<input id="vopass" type="text" required minlength="8" autocomplete="off" placeholder="At least 8 characters"></label><h3 style="margin-top:6px">Modules</h3>${FEAT_INFO.map(([k,l,d])=>`<label class="chk"><input type="checkbox" name="vfeat" value="${k}" checked><span><b>${l}</b><br><span class="mute" style="font-size:13px">${d}</span></span></label>`).join('')}<button class="btn" type="submit">Create venue</button></form>`];return _growthSheet(d)};
+
 /* ---------- staff boot ---------- */
 function loginScreen(){$('#app').hidden=true;$('#guest').hidden=true;const L=$('#login');L.hidden=false;
   L.innerHTML=`<div class="login"><div class="card">${LOGO}<h1>Sign in</h1><p class="mute">Your venue's floor, bookings, door and tickets.</p><form id="slogin" class="stack"><label class="f">Email<input id="lemail" type="email" required autocomplete="username"></label><label class="f">Password<input id="lpass" type="password" required autocomplete="current-password"></label><p id="lerr" class="err" role="alert" style="margin:0"></p><button class="btn" type="submit">Sign in</button></form></div></div>`;
@@ -1143,11 +1216,11 @@ async function bootStaff(){
   render();ro.observe($('#main'));
   setInterval(()=>{if(S&&!S.sheet&&!drag&&document.visibilityState==='visible'&&!['editor','setup','community'].includes(VIEW)&&!document.activeElement?.matches('input,textarea,select'))refresh()},20000)}
 /** Extra loads after a venue: slot ids (synced with the setup grid) and automation counts. */
-async function afterLoad(){const VD=VDATA[S.vi],mgr=VENUES[S.vi].role!=='waiter'&&VENUES[S.vi].role!=='door';
+async function afterLoad(){const VD=VDATA[S.vi],mgr=CAN('setup');
   try{VD.slots=await GET(vurl('/slots'))}catch(_){VD.slots=[]}
   const want=slots().map(min2hm).join(),have=(VD.slots||[]).map(s=>s.startsAt).sort((a,b)=>hm2min(a)-hm2min(b)).join();
   if(mgr&&want!==have)try{await syncSlots()}catch(_){}
-  if(mgr)try{const n=await GET(vurl('/automations'));S.autos.forEach(a=>{a.n=n[a.k]||0})}catch(_){}}
+  if(CAN('marketing'))try{const n=await GET(vurl('/automations'));S.autos.forEach(a=>{a.n=n[a.k]||0})}catch(_){}}
 const _loadVenue=loadVenue;
 loadVenue=async(vi,keep)=>{await _loadVenue(vi,keep);if(!keep)await afterLoad()};
 

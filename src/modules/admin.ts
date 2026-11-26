@@ -7,7 +7,8 @@ import { parse, staffUser, superAdmin } from '../lib/http.js';
 import { config } from '../config.js';
 import { paymobEnabled } from '../integrations/paymob.js';
 import { slugify } from '../lib/codes.js';
-import { conflict } from '../lib/errors.js';
+import { conflict, notFound } from '../lib/errors.js';
+import { FEATURES } from '../lib/access.js';
 
 export async function getPlatformSettings() {
   const [s] = await db.select().from(schema.platformSettings).where(eq(schema.platformSettings.id, 1));
@@ -44,9 +45,27 @@ export default async function admin(app: FastifyInstance) {
     return s;
   });
 
+  /* Every venue with its owners and how many staff accounts it has. */
   app.get('/admin/venues', async (req) => {
     await superAdmin(req);
-    return db.select().from(schema.venues).orderBy(asc(schema.venues.name));
+    const venues = await db.select().from(schema.venues).orderBy(asc(schema.venues.name));
+    const staff = await db.select({ venueId: schema.venueStaff.venueId, role: schema.venueStaff.role, roleId: schema.venueStaff.roleId, name: schema.users.name, email: schema.users.email })
+      .from(schema.venueStaff).innerJoin(schema.users, eq(schema.users.id, schema.venueStaff.userId));
+    return venues.map((v) => {
+      const mine = staff.filter((s) => s.venueId === v.id);
+      return { ...v, owners: mine.filter((s) => s.role === 'owner' && !s.roleId).map(({ name, email }) => ({ name, email })), staffCount: mine.length };
+    });
+  });
+
+  /* Switch modules on or off for a venue, rename it, or pause it. */
+  app.patch<{ Params: { venueId: string } }>('/admin/venues/:venueId', async (req) => {
+    await superAdmin(req);
+    const b = parse(z.object({
+      name: z.string().min(2).max(80), active: z.boolean(), features: z.array(z.enum(FEATURES)).max(FEATURES.length),
+    }).partial(), req.body);
+    const [v] = await db.update(schema.venues).set(b).where(eq(schema.venues.id, parse(z.string().uuid(), req.params.venueId))).returning();
+    if (!v) throw notFound('Venue not found');
+    return v;
   });
 
   /* Onboard a new venue with its owner account. */
@@ -55,13 +74,14 @@ export default async function admin(app: FastifyInstance) {
     const b = parse(z.object({
       name: z.string().min(2),
       slug: z.string().optional(),
+      features: z.array(z.enum(FEATURES)).max(FEATURES.length).optional(),
       owner: z.object({ name: z.string().min(2), email: z.string().email(), password: z.string().min(8) }),
     }), req.body);
     const slug = slugify(b.slug ?? b.name);
     const result = await db.transaction(async (tx) => {
       const [taken] = await tx.select({ id: schema.venues.id }).from(schema.venues).where(eq(schema.venues.slug, slug));
       if (taken) throw conflict('That venue link is taken', 'slug_taken');
-      const [venue] = await tx.insert(schema.venues).values({ name: b.name, slug }).returning();
+      const [venue] = await tx.insert(schema.venues).values({ name: b.name, slug, ...(b.features ? { features: b.features } : {}) }).returning();
       const email = b.owner.email.toLowerCase();
       let [user] = await tx.select().from(schema.users).where(eq(schema.users.email, email));
       if (!user) {

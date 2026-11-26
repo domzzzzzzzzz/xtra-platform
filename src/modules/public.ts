@@ -13,16 +13,17 @@ import { acceptReservation, bookingInput, createBooking, statusUrl } from './res
 import { startPayment } from './payments.js';
 import { tierFor } from './guests-service.js';
 
-async function venueBySlug(slug: string) {
+async function venueBySlug(slug: string, feature?: string) {
   const [v] = await db.select().from(schema.venues).where(and(eq(schema.venues.slug, slug), eq(schema.venues.active, true)));
   if (!v) throw notFound('Venue not found');
+  if (feature && !v.features.includes(feature)) throw notFound('This venue does not take bookings online');
   return v;
 }
 
 export default async function publicRoutes(app: FastifyInstance) {
   /* The venue's white-label booking page. */
   app.get<{ Params: { slug: string } }>('/public/venues/:slug', async (req) => {
-    const v = await venueBySlug(req.params.slug);
+    const v = await venueBySlug(req.params.slug, 'reservations');
     const items = await db.select().from(schema.floorItems).where(and(eq(schema.floorItems.venueId, v.id), eq(schema.floorItems.enabled, true)))
       .orderBy(asc(schema.floorItems.sort));
     const s = v.settings;
@@ -41,7 +42,7 @@ export default async function publicRoutes(app: FastifyInstance) {
 
   /* Time slots for one night and whether each still has room. */
   app.get<{ Params: { slug: string }; Querystring: { date?: string } }>('/public/venues/:slug/slots', async (req) => {
-    const v = await venueBySlug(req.params.slug);
+    const v = await venueBySlug(req.params.slug, 'reservations');
     const date = parse(z.string().regex(/^\d{4}-\d{2}-\d{2}$/), req.query.date ?? nightOf(new Date(), v.timezone));
     const slots = await db.select().from(schema.timeSlots).where(and(
       eq(schema.timeSlots.venueId, v.id), eq(schema.timeSlots.active, true),
@@ -76,7 +77,7 @@ export default async function publicRoutes(app: FastifyInstance) {
 
   /* Guest sends a booking request. It goes to the venue "In review". */
   app.post<{ Params: { slug: string } }>('/public/venues/:slug/bookings', async (req, reply) => {
-    const v = await venueBySlug(req.params.slug);
+    const v = await venueBySlug(req.params.slug, 'reservations');
     let r = await createBooking(v, parse(bookingInput, req.body));
     if (v.settings.approval === 'auto') r = await acceptReservation(v, r, {});
     reply.code(201);

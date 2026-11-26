@@ -24,6 +24,7 @@ export function client(app: FastifyInstance) {
     post: (u: string, b?: unknown) => call('POST', u, b ?? {}),
     put: (u: string, b: unknown) => call('PUT', u, b),
     patch: (u: string, b: unknown) => call('PATCH', u, b),
+    del: (u: string) => call('DELETE', u),
     login: async (email: string, password: string) => {
       const r = await call('POST', '/api/auth/login', { email, password });
       token = r.body.token;

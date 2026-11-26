@@ -76,16 +76,30 @@ export const venues = pgTable('venues', {
   paymobSubaccount: text('paymob_subaccount'),
   /** Screen settings the venue edits in Venue setup (slots grid, toggles, socials, automations). */
   settings: jsonb('settings').$type<VenueSettings>().notNull().default({}),
+  /** Modules XTRA switched on for this venue (see lib/access.ts FEATURES). */
+  features: jsonb('features').$type<string[]>().notNull().default(['reservations', 'ordering', 'ticketing', 'marketing', 'guests', 'community']),
   active: boolean('active').notNull().default(true),
   createdAt: createdAt(),
 }, (t) => [uniqueIndex('venues_slug_uq').on(t.slug)]);
 
 export const staffRole = pgEnum('staff_role', ['owner', 'manager', 'door', 'waiter']);
 
+/** A venue's own role: a name and exactly which screens it may use (see lib/access.ts PERMS). */
+export const venueRoles = pgTable('venue_roles', {
+  id: id(),
+  venueId: venueRef(),
+  name: text('name').notNull(),
+  permissions: jsonb('permissions').$type<string[]>().notNull().default([]),
+  createdAt: createdAt(),
+}, (t) => [uniqueIndex('venue_roles_name_uq').on(t.venueId, t.name)]);
+
 export const venueStaff = pgTable('venue_staff', {
   venueId: venueRef(),
   userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  /** Built-in role. Ignored for permissions when roleId is set. */
   role: staffRole('role').notNull(),
+  /** A custom role of this venue; it cannot be deleted while staff use it. */
+  roleId: uuid('role_id').references(() => venueRoles.id, { onDelete: 'restrict' }),
 }, (t) => [primaryKey({ columns: [t.venueId, t.userId] })]);
 
 /* ---------------------------------------------------------------- floor map */
