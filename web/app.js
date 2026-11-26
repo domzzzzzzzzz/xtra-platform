@@ -793,7 +793,7 @@ function vEvent(e){
   <form id="gencodes" class="promoadd"><label class="f">Name<input id="gname" placeholder="Influencers" autocomplete="off" maxlength="24"></label><label class="f">How many codes<input id="gn" type="number" min="1" max="500" value="10" inputmode="numeric"></label><label class="f">Discount %<input id="goff" type="number" min="1" max="100" value="100" inputmode="numeric"></label><label class="f">Each code works<select id="gper"><option value="1">Once</option><option value="2">2 times</option><option value="5">5 times</option><option value="10">10 times</option></select></label><label class="f" style="grid-column:1/-1">Only for one guest (optional)<input id="gguest" placeholder="Their WhatsApp number" inputmode="tel" autocomplete="off"></label><button class="btn sm" type="submit">Generate codes</button></form></div></div></div>
   <div>${evPhoneFor(e)}<p class="hint" style="text-align:center">${e.status==='draft'?'Put it on sale to open the ticket page':'This phone is live: tickets bought here are real orders'}</p></div></div>`;
 }
-const newEVP=()=>({step:'info',cart:{},tables:[],holders:[],promo:null,promoOpen:false,pm:'card',hold:0,zoom:1,order:null,done:null,busy:false});
+const newEVP=()=>({step:'info',cart:{},tables:[],holders:[],promo:null,promoOpen:false,pm:'card',hold:0,zoom:'fit',order:null,done:null,busy:false});
 const ZCOL=['#bfeaff','#dcf5c4','#ffffb3'];
 const tz=(e,id)=>e.tz.find(z=>z.id===id);
 const feePctOf=e=>e.fees?e.fees.feeBps/100:CFG().feePct,vatPctOf=e=>e.fees?e.fees.feeVatBps/100:CFG().vatPct;
@@ -816,7 +816,7 @@ function defaultEventLayout(ev){
   return ev}
 function evMap(e){const P=S.evp,H0=640,ty=e.types;
   const PT=(x,y)=>[H0-y,x],PR=r=>({x:H0-(r.y+r.h),y:r.x,w:r.h,h:r.w});
-  let o=`<svg viewBox="0 0 640 1000" style="width:${100*P.zoom}%" role="img" aria-label="Seat map">`;
+  let o=`<svg viewBox="0 0 640 1000" style="${P.zoom==='fit'?'height:100%;width:auto;max-width:100%':`width:${100*P.zoom}%`}" role="img" aria-label="Seat map">`;
   e.layout.filter(x=>x.kind==='zone').forEach(z=>{const r=PR(z),Z=tz(e,z.area);o+=`<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="16" fill="#fff"/><text x="${r.x+12}" y="${r.y+24}" font-size="18" font-weight="700" fill="#5b6280">${esc(Z?Z.name.split(' · ')[1]||Z.name:'')}</text>`});
   e.layout.filter(x=>!isT(x)&&x.kind!=='zone').forEach(f=>{const r=PR(f);
     if(f.kind==='standing'){const i=f.type,t=ty[i];if(!t)return;const out=t.sold>=t.qty,q=P.cart[i]||0;
@@ -914,7 +914,7 @@ function evPhone(e){
     bar=sumbar+`<div class="evbar" style="border:0;padding-top:0"><button class="gbtn" data-a="tknext" ${C.n&&!P.busy?'':'disabled'}>${P.busy?'Holding your tickets…':'Continue →'}</button></div>`;
   }
   else if(P.step==='seats'){
-    body=flowHead+`<div class="gbody" style="padding-top:8px"><div class="zoomrow"><span style="font-size:13px;color:#5b6280">Tap a zone or a table</span><div class="zoom"><button data-a="zoom" data-v="-1" aria-label="Zoom out">−</button><span class="num">${Math.round(P.zoom*100)}%</span><button data-a="zoom" data-v="1" aria-label="Zoom in">+</button></div></div><div class="evmap">${evMap(e)}</div>
+    body=flowHead+`<div class="gbody" style="padding-top:8px"><div class="zoomrow"><span style="font-size:13px;color:#5b6280">Tap a zone or a table</span><div class="zoom"><button data-a="zoom" data-v="-1" aria-label="Zoom out" ${P.zoom==='fit'?'disabled':''}>−</button><span class="num">${P.zoom==='fit'?'Whole map':Math.round(P.zoom*100)+'%'}</span><button data-a="zoom" data-v="1" aria-label="Zoom in">+</button>${P.zoom==='fit'?'':'<button data-a="zoom" data-v="fit" class="fitb" aria-label="Show the whole map">Fit</button>'}</div></div><div class="evmap ${P.zoom==='fit'?'fit':''}">${evMap(e)}</div>
      <div class="legend" style="margin:0;font-size:12px;gap:6px 12px">${e.types.map((t,i)=>`<span><i style="background:${ZCOL[i%3]}"></i>${esc(t.name)}</span>`).join('')}${e.tz.map(z=>`<span><i style="background:${z.color}"></i>${esc(z.name)}</span>`).join('')}<span><i style="background:#c9d0d9"></i>Sold</span></div>
      ${e.types.map((t,i)=>P.cart[i]?`<div class="tkrow sel"><div><b>${esc(t.name)}</b><br><span class="num" style="font-size:13px">${egp(t.price)} each</span></div><div class="stepper"><button data-a="tk" data-v="${i}:-1" aria-label="Remove one">−</button><b class="num">${P.cart[i]}</b><button data-a="tk" data-v="${i}:1" aria-label="Add one">+</button></div></div>`:'').join('')}
      ${P.tables.map(id=>{const t=e.tables.find(x=>x.id===id),Z=tz(e,t.zone)||{name:'Table',price:0};return `<div class="tkrow sel"><div><b>${esc(Z.name)}</b><br><span style="font-size:13px">Table ${esc(t.name)} · ${t.seats} seats · ${t.seats} × ${egp(Z.price)}</span></div><button class="chip" data-a="tbl" data-v="${t.id}">Remove</button></div>`}).join('')}</div>`;
@@ -967,7 +967,7 @@ tkstart:()=>{if(!ACCT.user){ACCT.view='login';ACCT.next='buy';render();return}co
 tkinfo:async()=>{clearTimeout(payPoll);if(S.evp.step!=='paying')await releaseHold();const z=S.evp.zoom;S.evp=newEVP();S.evp.zoom=z;reloadEv();render()},
 tk:v=>{const [i,d]=v.split(':').map(Number),e=curEv(),t=e.types[i],P=S.evp,c=P.cart,max=e.maxPerOrder||10,others=evCalc(e).n-(c[i]||0);c[i]=Math.max(0,Math.min(t.qty-t.sold,max-others,(c[i]||0)+d));if(P.order)releaseHold();render()},
 tbl:v=>{const P=S.evp;P.tables=P.tables.includes(v)?P.tables.filter(x=>x!==v):[...P.tables,v];if(P.order)releaseHold();render()},
-zoom:v=>{S.evp.zoom=Math.max(1,Math.min(2.5,S.evp.zoom+(+v)*.5));render()},
+zoom:v=>{const P=S.evp;if(v==='fit'){P.zoom='fit';render();return}if(P.zoom==='fit'){if(+v>0)P.zoom=1;render();return}const n=P.zoom+(+v)*.5;P.zoom=n<1?'fit':Math.min(3,n);render()},
 tkprev:()=>{const P=S.evp;if(P.step==='paying'){clearTimeout(payPoll);P.step='pay'}else P.step={details:'seats',pay:'details'}[P.step]||'seats';render()},
 tknext:async()=>{const P=S.evp,e=curEv();
   if(P.step==='seats'){if(!evCalc(e).n||P.busy)return;
@@ -1247,3 +1247,14 @@ loadVenue=async(vi,keep)=>{await _loadVenue(vi,keep);if(!keep)await afterLoad()}
 (()=>{const p=location.pathname;
   if(/^\/(book|b|e|o|t|p)\/[^/]+$/.test(p)||p==='/me'||p==='/paid')return bootGuest(p);
   if(TOKEN)bootStaff();else loginScreen()})();
+
+/* Pinch the event seat map to zoom: the SVG resizes live, the zoom is saved when the fingers lift. */
+(()=>{let start=null;
+  document.addEventListener('touchstart',e=>{const m=e.target.closest?.('.evmap');if(!m||e.touches.length!==2||!S?.evp)return;
+    const svg=m.querySelector('svg'),d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+    start={m,svg,d,w:svg.getBoundingClientRect().width,cw:m.clientWidth-16};},{passive:true});
+  document.addEventListener('touchmove',e=>{if(!start||e.touches.length!==2)return;e.preventDefault();
+    const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+    const w=Math.max(start.cw*.35,Math.min(start.cw*3,start.w*d/start.d));start.m.classList.remove('fit');Object.assign(start.svg.style,{height:'auto',maxWidth:'none',width:w+'px'});start.z=w/start.cw},{passive:false});
+  document.addEventListener('touchend',()=>{if(!start)return;const z=start.z;start=null;if(z==null)return;S.evp.zoom=z<1.05?'fit':Math.round(Math.min(3,z)*4)/4;render()});
+})();
