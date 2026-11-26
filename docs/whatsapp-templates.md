@@ -32,10 +32,9 @@ The WhatsApp account also holds other brands' numbers, so the webhook only takes
 
 ## Webhook (replies and read receipts)
 
-In the Meta app: WhatsApp → Configuration → Webhook → Edit.
+The Meta app and the WhatsApp account are shared with other brands, so do not change the app's webhook in the developer dashboard. Point only our number at this system instead:
 
-- Callback URL: `https://hospitality.xtratickets.com/webhooks/whatsapp`
-- Verify token: the value of `WHATSAPP_VERIFY_TOKEN`
-- Then subscribe to the `messages` field.
+1. In Dokploy set `WHATSAPP_VERIFY_TOKEN` (any word) and `WHATSAPP_APP_SECRET` (the Meta app's App secret, from the app admin: App settings, Basic). Redeploy.
+2. As super admin, `POST /api/admin/whatsapp-webhook`. It sets the phone number's `webhook_configuration.override_callback_uri` to `https://hospitality.xtratickets.com/webhooks/whatsapp`. Meta checks the verify token first. `GET` on the same path shows the current setting.
 
-`WHATSAPP_APP_SECRET` (App settings → Basic → App secret) must be set, or the webhook refuses every call.
+Without `WHATSAPP_APP_SECRET` the webhook refuses every call.

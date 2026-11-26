@@ -158,3 +158,19 @@ describe('Guest emails', () => {
     expect(row).toBe(true);
   });
 });
+
+describe('pointing our number at the webhook', () => {
+  it('needs the verify token before it calls Meta', async () => {
+    const a = client(app);
+    await a.login('admin@xtra.eg', 'admin1234');
+    const { token, phoneNumberId, verifyToken } = config.whatsapp;
+    Object.assign(config.whatsapp, { token: 'x', phoneNumberId: 'PN', verifyToken: '' });
+    try {
+      const r = await a.post('/api/admin/whatsapp-webhook', {});
+      expect(r.status).toBe(400);
+      expect(JSON.stringify(r.body)).toContain('WHATSAPP_VERIFY_TOKEN');
+    } finally {
+      Object.assign(config.whatsapp, { token, phoneNumberId, verifyToken });
+    }
+  });
+});

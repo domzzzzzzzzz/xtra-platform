@@ -74,6 +74,36 @@ async function sendWhatsApp(m: Outgoing): Promise<{ status: string; providerId?:
   return { status: 'sent', providerId: data.messages?.[0]?.id };
 }
 
+const graph = async (path: string, init?: { method: string; body: unknown }) => {
+  const res = await fetch(`https://graph.facebook.com/v21.0/${path}`, {
+    method: init?.method ?? 'GET',
+    headers: { Authorization: `Bearer ${config.whatsapp.token}`, 'Content-Type': 'application/json' },
+    body: init ? JSON.stringify(init.body) : undefined,
+  });
+  const data = (await res.json().catch(() => ({}))) as Record<string, unknown> & { error?: { message?: string } };
+  if (!res.ok) throw new Error(`WhatsApp ${res.status}: ${data.error?.message ?? 'request failed'}`);
+  return data;
+};
+
+/** Where Meta sends events for our number: the number's own override, else the app's or the account's webhook. */
+export const whatsappWebhookUrl = () => `${config.publicAppUrl}/webhooks/whatsapp`;
+export async function getNumberWebhook() {
+  const d = await graph(`${config.whatsapp.phoneNumberId}?fields=display_phone_number,webhook_configuration`);
+  return { number: d.display_phone_number as string | undefined, config: (d.webhook_configuration ?? null) as Record<string, string> | null };
+}
+
+/**
+ * Points only our phone number's events at this system. The Meta app and the
+ * WhatsApp account are shared with other brands, so their webhook is left alone.
+ * Meta calls GET /webhooks/whatsapp with the verify token before it accepts.
+ */
+export async function setNumberWebhook() {
+  if (!whatsappReady()) throw new Error('WhatsApp is not set up');
+  if (!config.whatsapp.verifyToken) throw new Error('Set WHATSAPP_VERIFY_TOKEN first');
+  await graph(config.whatsapp.phoneNumberId, { method: 'POST', body: { webhook_configuration: { override_callback_uri: whatsappWebhookUrl(), verify_token: config.whatsapp.verifyToken } } });
+  return getNumberWebhook();
+}
+
 /** "no-reply@x.com" becomes "<name> <no-reply@x.com>"; a value that has a name keeps it unless a name is given. */
 const fromHeader = (v: string, name?: string) => {
   const addr = /<([^>]+)>/.exec(v)?.[1] ?? v.trim();
