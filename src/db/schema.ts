@@ -532,11 +532,29 @@ export const messages = pgTable('messages', {
   kind: text('kind').notNull(),
   subject: text('subject'),
   body: text('body').notNull(),
+  /** logged, sent, delivered, read, failed (outgoing); received (incoming). */
   status: text('status').notNull(),
   providerId: text('provider_id'),
   error: text('error'),
+  /** out = we sent it, in = a guest wrote to us on WhatsApp. */
+  direction: text('direction').notNull().default('out'),
+  /** What is needed to send it again: the WhatsApp template, the email HTML, the sender. */
+  payload: jsonb('payload').$type<MessagePayload>(),
+  deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+  readAt: timestamp('read_at', { withTimezone: true }),
+  /** When staff opened an incoming message in the inbox. */
+  seenAt: timestamp('seen_at', { withTimezone: true }),
+  /** Staff member who wrote a reply from the inbox. */
+  sentBy: uuid('sent_by'),
   createdAt: createdAt(),
-}, (t) => [index('messages_venue_idx').on(t.venueId)]);
+}, (t) => [index('messages_venue_idx').on(t.venueId), index('messages_to_idx').on(t.to, t.createdAt), index('messages_provider_idx').on(t.providerId)]);
+
+export type MessagePayload = {
+  whatsappTemplate?: { name: string; params: string[]; button?: string; header?: string; language?: string } | null;
+  html?: string;
+  fromName?: string;
+  replyTo?: string;
+};
 
 /* ---------------------------------------------------------------- media */
 

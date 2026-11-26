@@ -14,7 +14,11 @@ export const config = {
     hmacSecret: env.PAYMOB_HMAC_SECRET ?? '',
     integrationIds: (env.PAYMOB_INTEGRATION_IDS ?? '').split(',').map((s) => s.trim()).filter(Boolean).map(Number),
   },
-  whatsapp: { token: env.WHATSAPP_TOKEN ?? '', phoneNumberId: env.WHATSAPP_PHONE_NUMBER_ID ?? '', language: env.WHATSAPP_TEMPLATE_LANGUAGE || 'en' },
+  whatsapp: {
+    token: env.WHATSAPP_TOKEN ?? '', phoneNumberId: env.WHATSAPP_PHONE_NUMBER_ID ?? '', language: env.WHATSAPP_TEMPLATE_LANGUAGE || 'en',
+    /** Webhook: the word typed in Meta when adding the callback URL, and the app secret that signs each call. */
+    verifyToken: env.WHATSAPP_VERIFY_TOKEN ?? '', appSecret: env.WHATSAPP_APP_SECRET ?? '',
+  },
   email: { resendKey: env.RESEND_API_KEY ?? '', from: env.EMAIL_FROM || 'XTRA <no-reply@xtra.eg>' },
   /** SMTP (e.g. Hostinger). Used for email when host, username and password are all set; it wins over Resend. */
   smtp: {

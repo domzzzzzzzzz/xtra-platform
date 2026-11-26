@@ -121,20 +121,12 @@ Both wallets are built and switch on by themselves once their env vars are set. 
 
 `/terms`, `/privacy` and `/refunds` are linked from the booking, ticket and checkout pages. Set `LEGAL_COMPANY_NAME`, `LEGAL_ADDRESS`, `SUPPORT_EMAIL` and `SUPPORT_PHONE` so they show your company and contact details. Have a lawyer review them.
 
-## WhatsApp templates
+## WhatsApp templates and inbox
 
-WhatsApp only lets a business start a chat with a Meta-approved template, so every guest message names one (`src/integrations/notify.ts`, `WaTemplate`). Create these in WhatsApp Manager, language English, each with a dynamic "Visit website" button `https://<PUBLIC_APP_URL host>/{{1}}` (the code fills in the path, like `b/AB12CD`):
+WhatsApp only lets a business start a chat with a Meta-approved template, so every guest message names one. The list, texts and samples are in `docs/whatsapp-templates.md`; the code that fills them is `src/modules/guest-messages.ts`. `WHATSAPP_TEMPLATE_LANGUAGE` (default `en`) sets the language code.
 
-| Template | Category | Body values |
-|---|---|---|
-| `xtra_login_code` | Authentication (copy code) | code |
-| `xtra_booking_received` | Utility | name, venue, date, time |
-| `xtra_booking_accepted` | Utility | name, venue, date, time |
-| `xtra_booking_deposit` | Utility | name, venue, date, deposit |
-| `xtra_booking_declined` | Utility | name, venue, date |
-| `xtra_booking_pass` | Utility | name, venue, date and time |
-| `xtra_booking_reminder` | Utility | name, venue, time |
-| `xtra_ticket` | Utility | name, event, venue, when |
-| `xtra_visit_thanks`, `xtra_birthday`, `xtra_winback` | Marketing | name, venue |
+Guest replies come in on `/webhooks/whatsapp` (set `WHATSAPP_VERIFY_TOKEN` and `WHATSAPP_APP_SECRET`). A reply goes to the venue that last wrote to that number, shows in **Messages → WhatsApp chats**, and staff with the Messages permission can answer while the chat is open (24 hours after the guest's last message). Delivery and read receipts update each message. "STOP" turns off WhatsApp offers for that guest.
 
-`WHATSAPP_TEMPLATE_LANGUAGE` (default `en`) sets the language code. XTRA admins can check a channel with `POST /api/admin/test-message {channel, to}`; WhatsApp uses Meta's `hello_world` template unless `template` is given. Email goes by SMTP when `MAIL_HOST`, `MAIL_USERNAME` and `MAIL_PASSWORD` are set (also `MAIL_PORT`, default 465, `MAIL_FROM`, `MAIL_SSL_ENABLE`, default true, `MAIL_STARTTLS_ENABLE`, default false), for example a Hostinger mailbox. Otherwise it goes through Resend (`RESEND_API_KEY`, `EMAIL_FROM`), and with neither it is only logged.
+Emails are branded HTML (`src/integrations/email-html.ts`) sent as "<Venue> via XTRA", with replies going to the venue's email. Offer emails carry a signed unsubscribe link (`/unsubscribe`). Email goes by SMTP when `MAIL_HOST`, `MAIL_USERNAME` and `MAIL_PASSWORD` are set (also `MAIL_PORT`, default 465, `MAIL_FROM`, `MAIL_SSL_ENABLE`, default true, `MAIL_STARTTLS_ENABLE`, default false). Otherwise it goes through Resend (`RESEND_API_KEY`, `EMAIL_FROM`), and with neither it is only logged.
+
+XTRA admins can check a channel with `POST /api/admin/test-message {channel, to}`.

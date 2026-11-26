@@ -10,7 +10,7 @@ import { paymobEnabled } from '../integrations/paymob.js';
 import { slugify } from '../lib/codes.js';
 import { conflict, notFound, badRequest } from '../lib/errors.js';
 import { FEATURES } from '../lib/access.js';
-import { emailReady, send } from '../integrations/notify.js';
+import { emailReady, getNumberWebhook, send, setNumberWebhook, whatsappReady, whatsappWebhookUrl } from '../integrations/notify.js';
 
 export async function getPlatformSettings() {
   const [s] = await db.select().from(schema.platformSettings).where(eq(schema.platformSettings.id, 1));
@@ -121,5 +121,16 @@ export default async function admin(app: FastifyInstance) {
     const [m] = await db.select({ status: schema.messages.status, error: schema.messages.error }).from(schema.messages)
       .where(eq(schema.messages.kind, 'test')).orderBy(desc(schema.messages.createdAt)).limit(1);
     return { ok, status: m?.status, error: m?.error ?? null };
+  });
+
+  /** Our number's webhook in Meta. POST points it at this system (our number only). */
+  app.get('/admin/whatsapp-webhook', async (req) => {
+    await superAdmin(req);
+    if (!whatsappReady()) throw badRequest('WhatsApp is not set up');
+    try { return { want: whatsappWebhookUrl(), ...(await getNumberWebhook()) }; } catch (e) { throw badRequest((e as Error).message); }
+  });
+  app.post('/admin/whatsapp-webhook', async (req) => {
+    await superAdmin(req);
+    try { return { want: whatsappWebhookUrl(), ...(await setNumberWebhook()) }; } catch (e) { throw badRequest((e as Error).message); }
   });
 }
