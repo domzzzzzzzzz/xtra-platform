@@ -1,0 +1,44 @@
+{
+  "name": "xtra-platform",
+  "version": "1.0.0",
+  "description": "XTRA hospitality platform API: reservations, seat maps, door check-in, ordering, ticketing, promo codes, payments, guests, marketing.",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "build": "tsc -p .",
+    "typecheck": "tsc -p . --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "seed": "tsx src/seed.ts",
+    "test": "vitest run"
+  },
+  "author": "",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@fastify/cors": "^11.4.3",
+    "@fastify/jwt": "^9.1.0",
+    "@fastify/sensible": "^6.0.8",
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^18.0.10",
+    "drizzle-orm": "^0.44.7",
+    "fastify": "^5.12.8",
+    "nanoid": "^5.1.16",
+    "pg": "^8.23.1",
+    "qrcode": "^1.5.4",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^22.20.7",
+    "@types/pg": "^8.23.1",
+    "@types/qrcode": "^1.5.6",
+    "drizzle-kit": "^0.31.11",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  },
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  }
+}

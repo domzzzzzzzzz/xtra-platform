@@ -1,0 +1,43 @@
+import Fastify, { type FastifyServerOptions } from 'fastify';
+import cors from '@fastify/cors';
+import jwt from '@fastify/jwt';
+import { config } from './config.js';
+import { AppError } from './lib/errors.js';
+import auth from './modules/auth.js';
+import admin from './modules/admin.js';
+import venues from './modules/venues.js';
+import reservations from './modules/reservations.js';
+import tabs from './modules/tabs.js';
+import ticketing from './modules/ticketing.js';
+import publicRoutes from './modules/public.js';
+import crm from './modules/crm.js';
+import payments from './modules/payments.js';
+
+export async function buildApp(opts: FastifyServerOptions = {}) {
+  const app = Fastify({ trustProxy: true, ...opts });
+  await app.register(cors, { origin: true });
+  await app.register(jwt, { secret: config.jwtSecret });
+
+  // HTML forms (test checkout) post urlencoded.
+  app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, (_req, body, done) => {
+    done(null, Object.fromEntries(new URLSearchParams(body as string)));
+  });
+
+  app.setErrorHandler((err, req, reply) => {
+    if (err instanceof AppError) return reply.code(err.statusCode).send({ error: err.code, message: err.message });
+    const e = err as { statusCode?: number; message: string; code?: string };
+    if (e.statusCode && e.statusCode < 500) return reply.code(e.statusCode).send({ error: 'bad_request', message: e.message });
+    // Postgres: invalid uuid in a path
+    if (e.code === '22P02') return reply.code(404).send({ error: 'not_found', message: 'Not found' });
+    req.log.error(err);
+    return reply.code(500).send({ error: 'server_error', message: 'Something went wrong. Please try again.' });
+  });
+
+  app.get('/health', async () => ({ ok: true }));
+
+  await app.register(async (api) => {
+    for (const m of [auth, admin, venues, reservations, tabs, ticketing, publicRoutes, crm]) await api.register(m);
+  }, { prefix: '/api' });
+  await app.register(payments);
+  return app;
+}
