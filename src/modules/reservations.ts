@@ -6,7 +6,7 @@ import { parse, venueAccess, MANAGERS, DOOR, FLOOR, egp } from '../lib/http.js';
 import { badRequest, conflict, notFound } from '../lib/errors.js';
 import { qrToken, shortCode } from '../lib/codes.js';
 import { nightOf, prettyDate, weekdayOf } from '../lib/dates.js';
-import { notifyGuest } from '../integrations/notify.js';
+import { notifyGuest, waPath } from '../integrations/notify.js';
 import { config } from '../config.js';
 import { upsertGuest, ensureVenueGuest, recordSpend } from './guests-service.js';
 
@@ -118,6 +118,7 @@ export async function createBooking(venue: Venue, input: z.infer<typeof bookingI
       channel: venue.notifyChannel, phone: r.guest.phone, email: r.guest.email, venueId: venue.id, guestId: r.guest.id,
       kind: 'booking_received', subject: `${venue.name}: booking received`,
       body: `Hi ${r.guest.firstName}, we got your booking at ${venue.name} for ${prettyDate(input.date)}, ${r.reservation.slotLabel}, ${partySize} people. It is in review. We will message you as soon as it is accepted. Track it: ${statusUrl(r.reservation.code)}`,
+      wa: { name: 'xtra_booking_received', params: [r.guest.firstName, venue.name, prettyDate(input.date), r.reservation.slotLabel], button: waPath(statusUrl(r.reservation.code)) },
     });
     return r.reservation;
   });
@@ -148,6 +149,7 @@ export async function sendPasses(r: Reservation, venue: Venue) {
       channel: venue.notifyChannel, phone: p.phone, email: p.email, venueId: venue.id, guestId: p.guestId ?? undefined,
       kind: 'booking_pass', subject: `${venue.name}: your pass for ${prettyDate(r.date)}`,
       body: `${p.name}, you are on the list at ${venue.name}, ${prettyDate(r.date)}, ${r.slotLabel}. Show this QR at the door: ${config.publicAppUrl}/p/${p.qrToken}`,
+      wa: { name: 'xtra_booking_pass', params: [p.name, venue.name, `${prettyDate(r.date)}, ${r.slotLabel}`], button: `p/${p.qrToken}` },
     });
   }
 }
@@ -183,6 +185,9 @@ export async function sendAccepted(venue: Venue, u: Reservation) {
     body: u.depositAmount > 0 && !u.depositPaidAt
       ? `Good news ${g.firstName}, ${venue.name} accepted your booking for ${prettyDate(u.date)}. Pay the ${egp(u.depositAmount)} deposit to confirm it (it comes off your bill): ${statusUrl(u.code)}`
       : `Good news ${g.firstName}, ${venue.name} accepted your booking for ${prettyDate(u.date)}, ${u.slotLabel}. See you there: ${statusUrl(u.code)}`,
+    wa: u.depositAmount > 0 && !u.depositPaidAt
+      ? { name: 'xtra_booking_deposit', params: [g.firstName, venue.name, prettyDate(u.date), egp(u.depositAmount)], button: waPath(statusUrl(u.code)) }
+      : { name: 'xtra_booking_accepted', params: [g.firstName, venue.name, prettyDate(u.date), u.slotLabel], button: waPath(statusUrl(u.code)) },
   });
 }
 
@@ -322,6 +327,7 @@ export default async function reservations(app: FastifyInstance) {
       channel: venue.notifyChannel, phone: g.phone, email: g.email, venueId: venue.id, guestId: g.id,
       kind: 'booking_declined', subject: `${venue.name}: booking update`,
       body: `Hi ${g.firstName}, sorry, ${venue.name} cannot take your booking for ${prettyDate(u.date)}.${b.reason ? ` ${b.reason}` : ''}`,
+      wa: { name: 'xtra_booking_declined', params: [g.firstName, venue.name, prettyDate(u.date)], button: `book/${venue.slug}` },
     });
     return u;
   });

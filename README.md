@@ -120,3 +120,21 @@ Both wallets are built and switch on by themselves once their env vars are set. 
 ## Policies
 
 `/terms`, `/privacy` and `/refunds` are linked from the booking, ticket and checkout pages. Set `LEGAL_COMPANY_NAME`, `LEGAL_ADDRESS`, `SUPPORT_EMAIL` and `SUPPORT_PHONE` so they show your company and contact details. Have a lawyer review them.
+
+## WhatsApp templates
+
+WhatsApp only lets a business start a chat with a Meta-approved template, so every guest message names one (`src/integrations/notify.ts`, `WaTemplate`). Create these in WhatsApp Manager, language English, each with a dynamic "Visit website" button `https://<PUBLIC_APP_URL host>/{{1}}` (the code fills in the path, like `b/AB12CD`):
+
+| Template | Category | Body values |
+|---|---|---|
+| `xtra_login_code` | Authentication (copy code) | code |
+| `xtra_booking_received` | Utility | name, venue, date, time |
+| `xtra_booking_accepted` | Utility | name, venue, date, time |
+| `xtra_booking_deposit` | Utility | name, venue, date, deposit |
+| `xtra_booking_declined` | Utility | name, venue, date |
+| `xtra_booking_pass` | Utility | name, venue, date and time |
+| `xtra_booking_reminder` | Utility | name, venue, time |
+| `xtra_ticket` | Utility | name, event, venue, when |
+| `xtra_visit_thanks`, `xtra_birthday`, `xtra_winback` | Marketing | name, venue |
+
+`WHATSAPP_TEMPLATE_LANGUAGE` (default `en`) sets the language code. XTRA admins can check a channel with `POST /api/admin/test-message {channel, to}`; WhatsApp uses Meta's `hello_world` template unless `template` is given. Email goes through Resend from `EMAIL_FROM` (for example `XTRA <no-reply@mail.xtratickets.com>` on a domain verified in Resend).

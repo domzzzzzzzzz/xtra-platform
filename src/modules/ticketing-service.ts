@@ -5,7 +5,7 @@ import { badRequest, conflict, notFound } from '../lib/errors.js';
 import { computeTicketTotals } from '../lib/pricing.js';
 import { normalizePhone, qrToken, shortCode } from '../lib/codes.js';
 import { config } from '../config.js';
-import { send } from '../integrations/notify.js';
+import { send, waPath } from '../integrations/notify.js';
 import { getPlatformSettings } from './admin.js';
 import { upsertGuest, ensureVenueGuest, recordSpend } from './guests-service.js';
 
@@ -223,7 +223,8 @@ export async function onTicketsPaid(orderId: string) {
     const phone = t.phone ?? o.buyerPhone;
     const email = t.email ?? o.buyerEmail;
     const body = `${t.firstName}, your ticket for ${event.title} at ${venue.name}, ${when}. Show this QR at the door, or add it to your wallet: ${ticketUrl(t.qrToken)}`;
-    if (phone) await send({ channel: 'whatsapp', to: phone, kind: 'ticket', body, venueId: venue.id, guestId: o.guestId });
+    if (phone) await send({ channel: 'whatsapp', to: phone, kind: 'ticket', body, venueId: venue.id, guestId: o.guestId,
+      whatsappTemplate: { name: 'xtra_ticket', params: [t.firstName, event.title, venue.name, when], button: waPath(ticketUrl(t.qrToken)) } });
     if (email) await send({ channel: 'email', to: email, kind: 'ticket', subject: `Your ticket: ${event.title}`, body, venueId: venue.id, guestId: o.guestId });
   }
 }
