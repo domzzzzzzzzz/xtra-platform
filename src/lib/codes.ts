@@ -16,11 +16,20 @@ export function slugify(s: string) {
   return s.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'venue';
 }
 
-/** Egyptian mobile numbers to one format: +201XXXXXXXXX. */
+/**
+ * Phone numbers to one international format. Egyptian local numbers
+ * (01X…) become +201X…; numbers with a country code are kept, and a
+ * leading 0 typed after +20 ("+20 010…") is dropped.
+ */
 export function normalizePhone(raw: string): string {
   let d = raw.replace(/[^\d+]/g, '');
+  const intl = d.startsWith('+') || d.startsWith('00');
   if (d.startsWith('+')) d = d.slice(1);
-  if (d.startsWith('00')) d = d.slice(2);
+  else if (d.startsWith('00')) d = d.slice(2);
+  if (intl) {
+    if (d.startsWith('200')) d = '20' + d.slice(3);
+    return '+' + d;
+  }
   if (d.startsWith('0')) d = '20' + d.slice(1);
   if (!d.startsWith('20') && d.length === 10 && d.startsWith('1')) d = '20' + d;
   return '+' + d;

@@ -401,6 +401,67 @@ describe('Venue images and location', () => {
   });
 });
 
+describe('Ticket tiers sold out by hand, and invitations', () => {
+  it('a tier marked sold out stops sales but not invites; invites send free tickets that can be cancelled', async () => {
+    api.setToken(ownerToken);
+    const e = await api.post(`${v()}/events`, { title: 'Invite Night', startsAt: new Date(Date.now() + 4 * 86400_000).toISOString() });
+    const map = await api.put(`${v()}/events/${e.body.id}/map`, { zones: [
+      { name: 'Early bird', kind: 'standing', price: 30000, capacity: 5, x: 0, y: 0, w: 10, h: 4 },
+      { name: 'VIP', kind: 'table', price: 100000, x: 0, y: 5, w: 10, h: 4, seats: [{ label: 'V1', seats: 4 }, { label: 'V2', seats: 4 }] },
+    ] });
+    const early = map.body.zones.find((z: any) => z.name === 'Early bird');
+    const vip = map.body.zones.find((z: any) => z.name === 'VIP');
+    await api.patch(`${v()}/events/${e.body.id}`, { status: 'published' });
+
+    // Mark Early bird sold out: the page shows it closed and holds are refused.
+    expect((await api.patch(`${v()}/events/${e.body.id}/zones/${early.id}`, { soldOut: true })).body.soldOut).toBe(true);
+    let pub = await api.get(`/api/public/events/${e.body.id}`);
+    expect(pub.body.zones.find((z: any) => z.id === early.id)).toMatchObject({ left: 0, soldOut: true, closed: true });
+    expect((await api.post(`/api/public/events/${e.body.id}/hold`, { items: [{ zoneId: early.id, qty: 1 }] })).status).toBe(409);
+    // Saving the seat map again keeps it closed.
+    const again = await api.put(`${v()}/events/${e.body.id}/map`, { zones: map.body.zones.map((z: any) => ({ ...z, soldOut: undefined, seats: map.body.seats.filter((s: any) => s.zoneId === z.id) })) });
+    expect(again.status).toBe(200);
+    expect(again.body.zones.find((z: any) => z.id === early.id).markedSoldOut).toBe(true);
+
+    // Invite 3 people to the closed tier by WhatsApp and email.
+    const inv = await api.post(`${v()}/events/${e.body.id}/invites`, { zoneId: early.id, qty: 3, firstName: 'Sara', lastName: 'Adel', phone: '+971 50 123 4567', email: 'sara@example.com', note: 'See you there' });
+    expect(inv.status).toBe(201);
+    expect(inv.body.tickets).toBe(3);
+    const wa = await db.select().from(schema.messages).where(eq(schema.messages.channel, 'whatsapp'));
+    expect(wa.some((m) => m.to.endsWith('971501234567') && m.body.includes('invited you'))).toBe(true);
+    const mail = await db.select().from(schema.messages).where(eq(schema.messages.kind, 'ticket_invite'));
+    expect(mail[0].subject).toContain("You're invited");
+    // A whole VIP table, email only.
+    const v1 = map.body.seats.find((s: any) => s.label === 'V1');
+    expect((await api.post(`${v()}/events/${e.body.id}/invites`, { zoneId: vip.id, seatId: v1.id, firstName: 'Omar', email: 'omar@example.com', channels: ['email'] })).body.tickets).toBe(4);
+    expect((await api.post(`${v()}/events/${e.body.id}/invites`, { zoneId: vip.id, seatId: v1.id, firstName: 'Late', email: 'l@example.com', channels: ['email'] })).status).toBe(409);
+    expect((await api.post(`${v()}/events/${e.body.id}/invites`, { zoneId: early.id, firstName: 'NoPhone', channels: ['whatsapp'] })).status).toBe(400);
+    pub = await api.get(`/api/public/events/${e.body.id}`);
+    expect(pub.body.seats.find((s: any) => s.id === v1.id).taken).toBe(true);
+
+    // Invites are not sales: no money, counted apart.
+    const sales = await api.get(`${v()}/events/${e.body.id}/sales`);
+    expect(sales.body).toMatchObject({ tickets: 0, invited: 7, collected: 0, orders: 0 });
+    const list = await api.get(`${v()}/events/${e.body.id}/invites`);
+    expect(list.body.length).toBe(2);
+    const sara = list.body.find((x: any) => x.name === 'Sara Adel');
+    expect(sara).toMatchObject({ tickets: 3, status: 'active', phone: '+971501234567' });
+    const tix = await api.get(`${v()}/events/${e.body.id}/tickets`);
+    expect(tix.body.filter((t: any) => t.invite).length).toBe(7);
+    expect(tix.body.some((t: any) => t.firstName === 'Guest' && t.lastName === 'of Sara')).toBe(true);
+
+    // Resend, then cancel: the QR stops working.
+    expect((await api.post(`${v()}/events/${e.body.id}/invites/${sara.id}/resend`)).body.sent).toBe(true);
+    expect((await api.del(`${v()}/events/${e.body.id}/invites/${sara.id}`)).body.cancelled).toBe(true);
+    const [t] = await db.select().from(schema.tickets).innerJoin(schema.ticketOrders, eq(schema.ticketOrders.id, schema.tickets.orderId)).where(eq(schema.ticketOrders.id, sara.id));
+    expect((await app.inject({ url: `/api/public/pass/${t.tickets.qrToken}` })).statusCode).toBe(404);
+
+    // Reopen the tier: guests can buy again.
+    await api.patch(`${v()}/events/${e.body.id}/zones/${early.id}`, { soldOut: false });
+    expect((await api.post(`/api/public/events/${e.body.id}/hold`, { items: [{ zoneId: early.id, qty: 1 }] })).status).toBe(201);
+  });
+});
+
 describe('Reports', () => {
   it('adds up bills, bookings, no-shows, tickets and best guests for a date range', async () => {
     api.setToken(ownerToken);
@@ -415,6 +476,12 @@ describe('Reports', () => {
     expect(r.body.topGuests[0].spend).toBeGreaterThanOrEqual(r.body.topGuests.at(-1).spend);
     expect(r.body.events.length).toBeGreaterThan(0);
     expect(r.body.tickets.sold).toBeGreaterThan(0);
+    expect(r.body.tickets.invited).toBeGreaterThan(0);
+    expect(r.body.previous).toMatchObject({ to: new Date(Date.parse(r.body.from) - 864e5).toISOString().slice(0, 10) });
+    expect(typeof r.body.previous.total).toBe('number');
+    const custom = await api.get(`${v()}/reports?from=2026-01-01&to=2026-01-10`);
+    expect(custom.body.days.length).toBe(10);
+    expect(custom.body.previous).toMatchObject({ from: '2025-12-22', to: '2025-12-31' });
     expect((await api.get(`${v()}/reports?from=2026-02-01&to=2026-01-01`)).status).toBe(400);
     // Built-in door staff do not see money.
     await api.post(`${v()}/staff`, { name: 'Dina Door', email: 'dina@lumen.eg', password: 'password1', role: 'door' });

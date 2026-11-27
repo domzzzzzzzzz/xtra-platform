@@ -33,7 +33,11 @@ export async function expireHolds(c: Conn = db, eventId?: string) {
   return expired.length;
 }
 
-/** What is left in each zone and which seats/tables are taken. Held + paid both count. */
+/**
+ * What is left in each zone and which seats/tables are taken. Held + paid both count.
+ * A zone staff marked sold out shows 0 left and every table taken; `realLeft` keeps
+ * the true count so invites can still use it.
+ */
 export async function availability(c: Conn, eventId: string) {
   const zones = await c.select().from(schema.eventZones).where(eq(schema.eventZones.eventId, eventId));
   const seats = await c.select().from(schema.eventSeats).where(eq(schema.eventSeats.eventId, eventId));
@@ -41,15 +45,17 @@ export async function availability(c: Conn, eventId: string) {
     .from(schema.ticketOrderLines).innerJoin(schema.ticketOrders, eq(schema.ticketOrders.id, schema.ticketOrderLines.orderId))
     .where(and(eq(schema.ticketOrders.eventId, eventId), inArray(schema.ticketOrders.status, ['held', 'paid'])));
   const takenSeats = new Set(lines.filter((l) => l.seatId).map((l) => l.seatId!));
+  const closedZones = new Set(zones.filter((z) => z.soldOut).map((z) => z.id));
   return {
     zones: zones.map((z) => {
       const zoneSeats = seats.filter((s) => s.zoneId === z.id && s.enabled);
       const used = lines.filter((l) => l.zoneId === z.id).reduce((s, l) => s + l.qty, 0);
       const left = z.kind === 'standing' ? Math.max(0, z.capacity - used)
         : z.kind === 'decor' ? 0 : zoneSeats.filter((s) => !takenSeats.has(s.id)).length;
-      return { ...z, left, soldOut: z.kind !== 'decor' && left === 0 };
+      const closed = z.kind !== 'decor' && z.soldOut;
+      return { ...z, markedSoldOut: closed, realLeft: left, left: closed ? 0 : left, soldOut: z.kind !== 'decor' && (closed || left === 0) };
     }),
-    seats: seats.map((s) => ({ ...s, taken: takenSeats.has(s.id) || !s.enabled })),
+    seats: seats.map((s) => ({ ...s, sold: takenSeats.has(s.id), taken: takenSeats.has(s.id) || !s.enabled || closedZones.has(s.zoneId) })),
   };
 }
 
@@ -81,6 +87,7 @@ export async function hold(eventId: string, input: z.infer<typeof holdInput>) {
     for (const it of input.items) {
       const zone = av.zones.find((z) => z.id === it.zoneId);
       if (!zone || zone.kind === 'decor') throw badRequest('Unknown ticket type');
+      if (zone.markedSoldOut) throw conflict(`${zone.name} is sold out`, 'sold_out');
       if ('qty' in it) {
         if (zone.kind !== 'standing') throw badRequest(`Pick a seat or table in ${zone.name}`);
         want.set(zone.id, (want.get(zone.id) ?? 0) + it.qty);
@@ -211,13 +218,26 @@ export async function prepareCheckout(code: string, input: z.infer<typeof checko
 
 export const ticketUrl = (token: string) => `${config.publicAppUrl}/t/${token}`;
 
+type Channel = 'whatsapp' | 'email';
+
 export async function onTicketsPaid(orderId: string) {
   const [o] = await db.update(schema.ticketOrders).set({ status: 'paid', paidAt: new Date() })
     .where(and(eq(schema.ticketOrders.id, orderId), inArray(schema.ticketOrders.status, ['held', 'expired']))).returning();
   if (!o) return;
+  await sendTickets(o);
+}
+
+/**
+ * Message every ticket of a paid order: WhatsApp and email. Invites get "you're
+ * invited" wording and no receipt; `channels` limits where they go.
+ */
+export async function sendTickets(o: Order, opts: { channels?: Channel[] } = {}) {
+  const invite = o.kind === 'invite';
+  const useWa = !opts.channels || opts.channels.includes('whatsapp');
+  const useEmail = !opts.channels || opts.channels.includes('email');
   const [event] = await db.select().from(schema.events).where(eq(schema.events.id, o.eventId));
   const [venue] = await db.select().from(schema.venues).where(eq(schema.venues.id, o.venueId));
-  if (o.guestId) await recordSpend(db, o.venueId, o.guestId, o.subtotal - o.discount, o.id, 'tickets', false);
+  if (o.guestId && !invite) await recordSpend(db, o.venueId, o.guestId, o.subtotal - o.discount, o.id, 'tickets', false);
   const list = await db.select({ t: schema.tickets, zone: schema.eventZones.name, seat: schema.eventSeats.label }).from(schema.tickets)
     .innerJoin(schema.eventZones, eq(schema.eventZones.id, schema.tickets.zoneId))
     .leftJoin(schema.eventSeats, eq(schema.eventSeats.id, schema.tickets.seatId))
@@ -230,11 +250,11 @@ export async function onTicketsPaid(orderId: string) {
 
   // WhatsApp: a holder with their own number gets their ticket; the buyer gets one
   // message for the rest (their ticket, or a link to the whole order).
-  const buyerPhone = o.buyerPhone ? normalizePhone(o.buyerPhone) : null;
+  const buyerPhone = useWa && o.buyerPhone ? normalizePhone(o.buyerPhone) : null;
   const mine: typeof list = [];
   for (const x of list) {
     const phone = x.t.phone ? normalizePhone(x.t.phone) : null;
-    if (!phone || phone === buyerPhone) { mine.push(x); continue; }
+    if (!phone || phone === buyerPhone || !useWa) { mine.push(x); continue; }
     const body = `Hi ${x.t.firstName}, your ticket for ${event.title} at ${venue.name}, ${when} (${typeOf(x)}). Show this QR at the door: ${ticketUrl(x.t.qrToken)}`;
     await send({ channel: 'whatsapp', to: phone, kind: 'ticket', body, venueId: venue.id, guestId: o.guestId,
       whatsappTemplate: ticketWa(venue, { firstName: x.t.firstName, qrToken: x.t.qrToken, type: typeOf(x) }, event.title, when) });
@@ -242,27 +262,31 @@ export async function onTicketsPaid(orderId: string) {
   if (buyerPhone && mine.length === 1) {
     const x = mine[0];
     await send({ channel: 'whatsapp', to: buyerPhone, kind: 'ticket', venueId: venue.id, guestId: o.guestId,
-      body: `Hi ${x.t.firstName}, your ticket for ${event.title} at ${venue.name}, ${when} (${typeOf(x)}). Show this QR at the door: ${ticketUrl(x.t.qrToken)}`,
+      body: invite
+        ? `Hi ${x.t.firstName}, ${venue.name} invited you to ${event.title}, ${when} (${typeOf(x)}). Your free ticket, show this QR at the door: ${ticketUrl(x.t.qrToken)}`
+        : `Hi ${x.t.firstName}, your ticket for ${event.title} at ${venue.name}, ${when} (${typeOf(x)}). Show this QR at the door: ${ticketUrl(x.t.qrToken)}`,
       whatsappTemplate: ticketWa(venue, { firstName: buyerName, qrToken: x.t.qrToken, type: typeOf(x) }, event.title, when) });
   } else if (buyerPhone && mine.length > 1) {
     await send({ channel: 'whatsapp', to: buyerPhone, kind: 'ticket_order', venueId: venue.id, guestId: o.guestId,
-      body: `Hi ${buyerName}, your ${mine.length} tickets for ${event.title} at ${venue.name}, ${when} are ready. Open them and share each one with its guest: ${config.publicAppUrl}/o/${o.code}`,
+      body: invite
+        ? `Hi ${buyerName}, ${venue.name} invited you to ${event.title}, ${when}. Your ${mine.length} free tickets are ready, share each one with its guest: ${config.publicAppUrl}/o/${o.code}`
+        : `Hi ${buyerName}, your ${mine.length} tickets for ${event.title} at ${venue.name}, ${when} are ready. Open them and share each one with its guest: ${config.publicAppUrl}/o/${o.code}`,
       whatsappTemplate: { name: 'xtra_ticket_order', header: venue.name, params: [buyerName, String(mine.length), event.title, when], button: `o/${o.code}` } });
   }
 
   // Email: the buyer gets one email with every ticket and the receipt; a holder with
   // a different email gets an email with just their own ticket.
   const byEmail = new Map<string, typeof list>();
-  if (o.buyerEmail) byEmail.set(o.buyerEmail.toLowerCase(), list);
-  for (const x of list) {
+  if (o.buyerEmail && useEmail) byEmail.set(o.buyerEmail.toLowerCase(), list);
+  for (const x of useEmail ? list : []) {
     const e = x.t.email?.toLowerCase();
     if (e && !byEmail.has(e)) byEmail.set(e, [x]);
   }
   for (const [email, items] of byEmail) {
     const isBuyer = items === list && !!o.buyerEmail;
     const m = ticketOrderEmail(venue, isBuyer ? o : { ...o, subtotal: 0, discount: 0, fee: 0, feeVat: 0, total: 0 }, event.title, when,
-      items.map((x) => ({ name: nameOf(x), type: typeOf(x), qrToken: x.t.qrToken })), isBuyer ? buyerName : items[0].t.firstName || 'there');
-    if (!isBuyer) m.mail.doc.receipt = undefined;
+      items.map((x) => ({ name: nameOf(x), type: typeOf(x), qrToken: x.t.qrToken })), isBuyer ? buyerName : items[0].t.firstName || 'there', invite ? { note: o.note } : undefined);
+    if (!isBuyer || invite) m.mail.doc.receipt = undefined;
     await send({ channel: 'email', to: email, kind: m.kind, subject: m.subject, venueId: venue.id, guestId: o.guestId, ...emailParts(venue, m.mail.doc) });
   }
 }

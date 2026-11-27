@@ -192,8 +192,22 @@ export function ticketWa(v: VenueLike, t: { firstName: string; qrToken: string; 
 export function ticketOrderEmail(
   v: VenueLike, o: { code: string; subtotal: number; discount: number; fee: number; feeVat: number; total: number },
   event: string, when: string, tickets: { name: string; type: string; qrToken: string }[], buyer: string,
+  invite?: { note?: string | null },
 ): Omit<GuestMessage, 'wa'> {
   const n = tickets.length;
+  if (invite) {
+    return {
+      kind: 'ticket_invite', subject: `You're invited · ${event} · ${when}`,
+      body: `Hi ${buyer}, ${v.name} invited you to ${event}, ${when}. Your ${n === 1 ? 'ticket is' : `${n} tickets are`} free. Order ${o.code}.`,
+      mail: { venue: v, doc: {
+        preheader: `${v.name} invited you. ${event}, ${when}.`, title: `You're invited to ${event}.`,
+        intro: `Hi ${buyer}, ${v.name} has invited you${n > 1 ? ` and ${n - 1} ${n === 2 ? 'guest' : 'guests'}` : ''}. ${n === 1 ? 'Your ticket is' : 'Your tickets are'} below, free of charge. Each QR lets one person in once.${invite.note ? ` A note from ${v.name}: "${invite.note}"` : ''}`,
+        rows: [['Event', event], ['When', when], ['Venue', v.name], ['Invitation', o.code]],
+        qrs: tickets.map((t) => ({ token: t.qrToken, caption: `${t.name} · ${t.type}`, url: `${app()}/t/${t.qrToken}` })),
+        note: 'Screenshots work too. The venue may ask for an ID at the door.',
+      } },
+    };
+  }
   const receipt: [string, string][] = [[`Tickets (${n})`, egp(o.subtotal)]];
   if (o.discount) receipt.push(['Discount', `- ${egp(o.discount)}`]);
   if (o.fee) receipt.push(['Booking fee', egp(o.fee)]);

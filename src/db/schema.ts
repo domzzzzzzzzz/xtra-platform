@@ -380,6 +380,8 @@ export const eventZones = pgTable('event_zones', {
   h: real('h').notNull().default(1),
   color: text('color'),
   sort: integer('sort').notNull().default(0),
+  /** Staff closed this ticket type by hand: guests see it as sold out. Invites still work. */
+  soldOut: boolean('sold_out').notNull().default(false),
 });
 
 /** Individual seats or tables inside a seated/table zone. */
@@ -437,6 +439,10 @@ export const ticketOrders = pgTable('ticket_orders', {
   buyerEmail: text('buyer_email'),
   buyerPhone: text('buyer_phone'),
   paidAt: timestamp('paid_at', { withTimezone: true }),
+  /** sale = bought on the ticket page, invite = free ticket sent by staff. */
+  kind: text('kind').notNull().default('sale'),
+  invitedBy: uuid('invited_by').references(() => users.id),
+  note: text('note'),
   createdAt: createdAt(),
 }, (t) => [uniqueIndex('ticket_orders_code_uq').on(t.code), index('ticket_orders_event_idx').on(t.eventId, t.status)]);
 

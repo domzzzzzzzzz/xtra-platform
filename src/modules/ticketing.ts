@@ -4,13 +4,14 @@ import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { parse, venueAccess, MANAGERS } from '../lib/http.js';
 import { badRequest, conflict, notFound } from '../lib/errors.js';
-import { normalizePhone, promoCode, slugify } from '../lib/codes.js';
+import { normalizePhone, promoCode, qrToken, shortCode, slugify } from '../lib/codes.js';
 import { config } from '../config.js';
 import { startPayment } from './payments.js';
 import { imageRef } from './media.js';
 import {
-  availability, applyPromo, checkoutInput, feeRatesFor, hold, holdInput, onTicketsPaid, orderByCode, prepareCheckout,
+  availability, applyPromo, checkoutInput, expireHolds, feeRatesFor, hold, holdInput, onTicketsPaid, orderByCode, prepareCheckout, sendTickets,
 } from './ticketing-service.js';
+import { upsertGuest, ensureVenueGuest } from './guests-service.js';
 
 type P = { venueId: string };
 type PE = P & { eventId: string };
@@ -41,6 +42,7 @@ const zoneBody = z.object({
   x: z.number(), y: z.number(), w: z.number().positive(), h: z.number().positive(),
   color: z.string().nullish(),
   sort: z.number().int().default(0),
+  soldOut: z.boolean().optional(),
   seats: z.array(z.object({
     id: z.string().uuid().optional(), label: z.string().min(1).max(20), x: z.number().default(0), y: z.number().default(0),
     seats: z.number().int().min(1).max(50).default(1), shape: z.string().max(20).nullish(), rotation: z.number().default(0), enabled: z.boolean().default(true),
@@ -67,16 +69,18 @@ export default async function ticketing(app: FastifyInstance) {
     const list = await db.select().from(schema.events).where(eq(schema.events.venueId, req.params.venueId)).orderBy(asc(schema.events.startsAt));
     return Promise.all(list.map(async (e) => {
       const map = await eventMap(e.id);
-      const sold = await db.select({ zoneId: schema.tickets.zoneId, seatId: schema.tickets.seatId, n: sql<number>`count(*)::int`, inN: sql<number>`count(${schema.tickets.checkedInAt})::int` })
+      const sold = await db.select({ zoneId: schema.tickets.zoneId, seatId: schema.tickets.seatId, n: sql<number>`count(*)::int`, inN: sql<number>`count(${schema.tickets.checkedInAt})::int`,
+        inv: sql<number>`count(*) filter (where ${schema.ticketOrders.kind} = 'invite')::int` })
         .from(schema.tickets).innerJoin(schema.ticketOrders, eq(schema.ticketOrders.id, schema.tickets.orderId))
         .where(and(eq(schema.tickets.eventId, e.id), eq(schema.ticketOrders.status, 'paid'))).groupBy(schema.tickets.zoneId, schema.tickets.seatId);
       const paid = await db.select({ net: sql<number>`coalesce(sum(${schema.ticketOrders.subtotal} - ${schema.ticketOrders.discount}),0)::int`, n: sql<number>`count(*)::int` })
-        .from(schema.ticketOrders).where(and(eq(schema.ticketOrders.eventId, e.id), eq(schema.ticketOrders.status, 'paid')));
+        .from(schema.ticketOrders).where(and(eq(schema.ticketOrders.eventId, e.id), eq(schema.ticketOrders.status, 'paid'), eq(schema.ticketOrders.kind, 'sale')));
       return {
         ...e, ...map,
         soldByZone: Object.fromEntries(map.zones.map((z) => [z.id, sold.filter((s) => s.zoneId === z.id).reduce((a, s) => a + s.n, 0)])),
         soldSeats: [...new Set(sold.filter((s) => s.seatId).map((s) => s.seatId))],
         checkedIn: sold.reduce((a, s) => a + s.inN, 0),
+        invited: sold.reduce((a, s) => a + s.inv, 0),
         revenue: paid[0].net, orders: paid[0].n,
       };
     }));
@@ -158,10 +162,12 @@ export default async function ticketing(app: FastifyInstance) {
   app.get<{ Params: PE }>('/venues/:venueId/events/:eventId/sales', async (req) => {
     await venueAccess(req, req.params.venueId, MANAGERS);
     const e = await loadEvent(req.params.venueId, req.params.eventId);
-    const orders = await db.select().from(schema.ticketOrders).where(and(eq(schema.ticketOrders.eventId, e.id), eq(schema.ticketOrders.status, 'paid')));
+    const orders = await db.select().from(schema.ticketOrders).where(and(eq(schema.ticketOrders.eventId, e.id), eq(schema.ticketOrders.status, 'paid'), eq(schema.ticketOrders.kind, 'sale')));
     const byZone = await db.select({
       zoneId: schema.tickets.zoneId, name: schema.eventZones.name,
-      sold: sql<number>`count(*)::int`, checkedIn: sql<number>`count(${schema.tickets.checkedInAt})::int`,
+      sold: sql<number>`(count(*) filter (where ${schema.ticketOrders.kind} = 'sale'))::int`,
+      invited: sql<number>`(count(*) filter (where ${schema.ticketOrders.kind} = 'invite'))::int`,
+      checkedIn: sql<number>`count(${schema.tickets.checkedInAt})::int`,
     }).from(schema.tickets).innerJoin(schema.ticketOrders, eq(schema.ticketOrders.id, schema.tickets.orderId))
       .innerJoin(schema.eventZones, eq(schema.eventZones.id, schema.tickets.zoneId))
       .where(and(eq(schema.tickets.eventId, e.id), eq(schema.ticketOrders.status, 'paid')))
@@ -170,6 +176,7 @@ export default async function ticketing(app: FastifyInstance) {
     return {
       orders: orders.length,
       tickets: byZone.reduce((s, z) => s + z.sold, 0),
+      invited: byZone.reduce((s, z) => s + z.invited, 0),
       checkedIn: byZone.reduce((s, z) => s + z.checkedIn, 0),
       gross: sum('subtotal'), discounts: sum('discount'), fees: sum('fee'), feeVat: sum('feeVat'), collected: sum('total'),
       /** What the venue receives: ticket price after discounts. Fees + VAT on fees go to XTRA. */
@@ -183,10 +190,120 @@ export default async function ticketing(app: FastifyInstance) {
     const e = await loadEvent(req.params.venueId, req.params.eventId);
     return db.select({
       id: schema.tickets.id, firstName: schema.tickets.firstName, lastName: schema.tickets.lastName, phone: schema.tickets.phone,
-      zone: schema.eventZones.name, checkedInAt: schema.tickets.checkedInAt, orderCode: schema.ticketOrders.code,
+      zone: schema.eventZones.name, checkedInAt: schema.tickets.checkedInAt, orderCode: schema.ticketOrders.code, invite: sql<boolean>`${schema.ticketOrders.kind} = 'invite'`,
     }).from(schema.tickets).innerJoin(schema.ticketOrders, eq(schema.ticketOrders.id, schema.tickets.orderId))
       .innerJoin(schema.eventZones, eq(schema.eventZones.id, schema.tickets.zoneId))
       .where(and(eq(schema.tickets.eventId, e.id), eq(schema.ticketOrders.status, 'paid'))).orderBy(asc(schema.tickets.firstName));
+  });
+
+  /* ---------- sold out by hand */
+  app.patch<{ Params: PE & { zoneId: string } }>('/venues/:venueId/events/:eventId/zones/:zoneId', async (req) => {
+    await venueAccess(req, req.params.venueId, MANAGERS);
+    const e = await loadEvent(req.params.venueId, req.params.eventId);
+    const b = parse(z.object({ soldOut: z.boolean() }), req.body);
+    const [zone] = await db.update(schema.eventZones).set({ soldOut: b.soldOut })
+      .where(and(eq(schema.eventZones.id, parse(z.string().uuid(), req.params.zoneId)), eq(schema.eventZones.eventId, e.id), sql`${schema.eventZones.kind} <> 'decor'`)).returning();
+    if (!zone) throw notFound('Ticket type not found');
+    return { id: zone.id, soldOut: zone.soldOut };
+  });
+
+  /* ---------- invitations: free tickets sent by staff */
+  const inviteBody = z.object({
+    zoneId: z.string().uuid(),
+    /** For a table or seated zone: which table/seat. */
+    seatId: z.string().uuid().optional(),
+    qty: z.number().int().min(1).max(20).default(1),
+    firstName: z.string().trim().min(1).max(60),
+    lastName: z.string().trim().max(60).default(''),
+    phone: z.string().min(8).max(20).optional(),
+    email: z.string().email().optional(),
+    channels: z.array(z.enum(['whatsapp', 'email'])).min(1).default(['whatsapp', 'email']),
+    note: z.string().trim().max(300).optional(),
+  });
+
+  app.get<{ Params: PE }>('/venues/:venueId/events/:eventId/invites', async (req) => {
+    await venueAccess(req, req.params.venueId, MANAGERS);
+    const e = await loadEvent(req.params.venueId, req.params.eventId);
+    const rows = await db.select({ o: schema.ticketOrders, by: schema.users.name }).from(schema.ticketOrders)
+      .leftJoin(schema.users, eq(schema.users.id, schema.ticketOrders.invitedBy))
+      .where(and(eq(schema.ticketOrders.eventId, e.id), eq(schema.ticketOrders.kind, 'invite'), inArray(schema.ticketOrders.status, ['paid', 'cancelled'])))
+      .orderBy(desc(schema.ticketOrders.createdAt));
+    const ids = rows.map((r) => r.o.id);
+    const tix = ids.length ? await db.select({ orderId: schema.tickets.orderId, first: schema.tickets.firstName, last: schema.tickets.lastName, zone: schema.eventZones.name, seat: schema.eventSeats.label, inAt: schema.tickets.checkedInAt })
+      .from(schema.tickets).innerJoin(schema.eventZones, eq(schema.eventZones.id, schema.tickets.zoneId)).leftJoin(schema.eventSeats, eq(schema.eventSeats.id, schema.tickets.seatId))
+      .where(inArray(schema.tickets.orderId, ids)) : [];
+    return rows.map(({ o, by }) => {
+      const mine = tix.filter((t) => t.orderId === o.id);
+      return {
+        id: o.id, code: o.code, status: o.status === 'paid' ? 'active' : 'cancelled', name: mine[0] ? `${mine[0].first} ${mine[0].last}`.trim() : '',
+        phone: o.buyerPhone, email: o.buyerEmail, note: o.note, tickets: mine.length, checkedIn: mine.filter((t) => t.inAt).length,
+        type: mine[0] ? (mine[0].seat ? `${mine[0].zone} · ${mine[0].seat}` : mine[0].zone) : '', invitedBy: by, createdAt: o.createdAt,
+      };
+    });
+  });
+
+  app.post<{ Params: PE }>('/venues/:venueId/events/:eventId/invites', async (req, reply) => {
+    const { user } = await venueAccess(req, req.params.venueId, MANAGERS);
+    const e = await loadEvent(req.params.venueId, req.params.eventId);
+    const b = parse(inviteBody, req.body);
+    if (b.channels.includes('whatsapp') && !b.phone) throw badRequest('Add a WhatsApp number, or send by email only', 'phone_needed');
+    if (b.channels.includes('email') && !b.email) throw badRequest('Add an email, or send by WhatsApp only', 'email_needed');
+    if (e.startsAt.getTime() + 6 * 3600_000 < Date.now()) throw badRequest('This event is over', 'sales_closed');
+    const { order, count } = await db.transaction(async (tx) => {
+      await tx.select({ id: schema.events.id }).from(schema.events).where(eq(schema.events.id, e.id)).for('update');
+      await expireHolds(tx, e.id);
+      const av = await availability(tx, e.id);
+      const zone = av.zones.find((x) => x.id === b.zoneId);
+      if (!zone || zone.kind === 'decor') throw badRequest('Unknown ticket type');
+      let seat: (typeof av.seats)[number] | undefined;
+      let count = b.qty;
+      if (zone.kind === 'standing') {
+        if (b.qty > zone.realLeft) throw conflict(zone.realLeft ? `Only ${zone.realLeft} left in ${zone.name}` : `${zone.name} has no places left`, 'sold_out');
+      } else {
+        seat = av.seats.find((x) => x.id === b.seatId && x.zoneId === zone.id);
+        if (!seat) throw badRequest(`Pick a table in ${zone.name}`, 'seat_needed');
+        if (seat.sold || !seat.enabled) throw conflict(`${seat.label} is already taken`, 'seat_taken');
+        count = zone.kind === 'table' ? Math.max(1, seat.seats) : 1;
+      }
+      const guest = b.phone ? await upsertGuest(tx, { firstName: b.firstName, lastName: b.lastName, phone: b.phone, email: b.email }) : null;
+      if (guest) await ensureVenueGuest(tx, e.venueId, guest.id);
+      const now = new Date();
+      const [o] = await tx.insert(schema.ticketOrders).values({
+        code: shortCode(), venueId: e.venueId, eventId: e.id, guestId: guest?.id ?? null, status: 'paid', paidAt: now, holdExpiresAt: now,
+        kind: 'invite', invitedBy: user.sub, note: b.note || null, buyerEmail: b.email ?? null, buyerPhone: guest?.phone ?? null,
+      }).returning();
+      await tx.insert(schema.ticketOrderLines).values({ orderId: o.id, zoneId: zone.id, seatId: seat?.id ?? null, qty: seat ? 1 : b.qty, unitPrice: 0 });
+      await tx.insert(schema.tickets).values(Array.from({ length: count }, (_, i) => ({
+        orderId: o.id, eventId: e.id, zoneId: zone.id, seatId: seat?.id ?? null,
+        // Extra places show at the door as "Guest of Sara".
+        firstName: i === 0 ? b.firstName : 'Guest', lastName: i === 0 ? b.lastName : `of ${b.firstName}`,
+        email: i === 0 ? b.email ?? null : null, phone: i === 0 ? guest?.phone ?? null : null, qrToken: qrToken(),
+      })));
+      return { order: o, count };
+    });
+    await sendTickets(order, { channels: b.channels });
+    reply.code(201);
+    return { id: order.id, code: order.code, tickets: count };
+  });
+
+  /* Send the invitation again (same QR codes). */
+  app.post<{ Params: PE & { orderId: string } }>('/venues/:venueId/events/:eventId/invites/:orderId/resend', async (req) => {
+    await venueAccess(req, req.params.venueId, MANAGERS);
+    const e = await loadEvent(req.params.venueId, req.params.eventId);
+    const [o] = await db.select().from(schema.ticketOrders).where(and(eq(schema.ticketOrders.id, parse(z.string().uuid(), req.params.orderId)), eq(schema.ticketOrders.eventId, e.id), eq(schema.ticketOrders.kind, 'invite')));
+    if (!o || o.status !== 'paid') throw notFound('Invitation not found');
+    await sendTickets(o);
+    return { sent: true };
+  });
+
+  /* Cancel an invitation: its QR codes stop working at the door. */
+  app.delete<{ Params: PE & { orderId: string } }>('/venues/:venueId/events/:eventId/invites/:orderId', async (req) => {
+    await venueAccess(req, req.params.venueId, MANAGERS);
+    const e = await loadEvent(req.params.venueId, req.params.eventId);
+    const [o] = await db.update(schema.ticketOrders).set({ status: 'cancelled' })
+      .where(and(eq(schema.ticketOrders.id, parse(z.string().uuid(), req.params.orderId)), eq(schema.ticketOrders.eventId, e.id), eq(schema.ticketOrders.kind, 'invite'), eq(schema.ticketOrders.status, 'paid'))).returning();
+    if (!o) throw notFound('Invitation not found');
+    return { cancelled: true };
   });
 
   /* ---------- promo codes */
@@ -313,7 +430,7 @@ export default async function ticketing(app: FastifyInstance) {
       priceFrom: priced.length ? Math.min(...priced.map((z) => z.price)) : 0,
       fees: rates,
       holdMinutes: config.holdMinutes,
-      zones: map.zones.map(({ capacity: _c, ...z }) => z),
+      zones: map.zones.map(({ capacity: _c, realLeft: _r, soldOut: _s, markedSoldOut, ...z }) => ({ ...z, soldOut: z.left === 0, closed: markedSoldOut })),
       seats: map.seats.map((s) => ({ id: s.id, zoneId: s.zoneId, label: s.label, x: s.x, y: s.y, seats: s.seats, shape: s.shape, rotation: s.rotation, taken: s.taken })),
     };
   });
