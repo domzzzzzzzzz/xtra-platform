@@ -74,3 +74,22 @@ export function verifyPaymobHmac(txn: Record<string, unknown>, hmac: string, sec
   const given = Buffer.from(hmac.toLowerCase());
   return expected.length === given.length && crypto.timingSafeEqual(expected, given);
 }
+
+/**
+ * Give money back on a paid Paymob transaction (whole or part). With no keys
+ * set (test checkout), nothing is sent and a test reference comes back.
+ */
+export async function refundTransaction(transactionId: string, amount: number): Promise<{ ref: string }> {
+  if (!paymobEnabled() || transactionId.startsWith('test_')) return { ref: `test_refund_${Date.now()}` };
+  const res = await fetch('https://accept.paymob.com/api/acceptance/void_refund/refund', {
+    method: 'POST',
+    headers: { Authorization: `Token ${config.paymob.secretKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transaction_id: transactionId, amount_cents: amount }),
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Paymob refund failed: ${res.status} ${text.slice(0, 200)}`);
+  let data: { id?: number | string; success?: boolean; data?: { message?: string } } = {};
+  try { data = JSON.parse(text); } catch { /* keep empty */ }
+  if (data.success === false) throw new Error(`Paymob refused the refund: ${data.data?.message ?? 'no reason given'}`);
+  return { ref: String(data.id ?? '') };
+}

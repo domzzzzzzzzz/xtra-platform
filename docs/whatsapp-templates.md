@@ -23,8 +23,13 @@ Create these in WhatsApp Manager → Message templates. For all of them:
 | `xtra_visit_thanks` | Marketing | Hi {{1}}, thank you for spending the night with us. We hope to see you again soon. | Nour | Book again | book/lumen-rooftop |
 | `xtra_birthday` | Marketing | Hi {{1}}, your birthday is coming up and we would love to celebrate with you. Book your table now. | Nour | Book a table | book/lumen-rooftop |
 | `xtra_winback` | Marketing | Hi {{1}}, it has been a while and we miss you. Come back this week, your table is waiting. | Nour | Book a table | book/lumen-rooftop |
+| `xtra_refund` | Utility | Hi {{1}}, we refunded {{2}} for your {{3}} (order {{4}}). It goes back to the card or wallet you paid with. Banks usually show it within 5 to 14 days. | Nour · EGP 1,057 · 2 tickets to Afro Night · Z43E7V | | |
+| `xtra_waitlist_open` | Utility | Hi {{1}}, tickets for {{2}} on {{3}} are available again. You were on the waitlist, and they go to whoever books first. | Nour · Afro Night · Sat 5 Dec, 10:00 pm | Get tickets | e/<event id> |
+| `xtra_daily_report` | Utility | Your summary for {{1}}: {{2}} came in, {{3}} guests were served and {{4}} tickets were sold. Open your reports for the full night. | Sat 5 Dec · EGP 84,200 · 132 · 96 | | |
 
-The code that fills them is in `src/modules/guest-messages.ts`. A changed text must match there.
+The last three (refund, waitlist, morning report) are new. Until Meta approves them, those messages go by email only. Once approved, add their names to `WHATSAPP_NEW_TEMPLATES` in Dokploy, comma separated, for example `xtra_refund,xtra_waitlist_open,xtra_daily_report`, and redeploy.
+
+The code that fills them is in `src/modules/guest-messages.ts` and `src/modules/daily-report.ts`. A changed text must match there.
 
 The declined, cancelled, pass, reminder and ticket texts were reworded when they were submitted, because Meta's category check read the first versions as marketing or as a login code. The parameters did not change.
 

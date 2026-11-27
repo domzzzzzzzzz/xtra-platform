@@ -53,6 +53,7 @@ const settingsBody = z.object({
   socials: z.record(z.string().max(30), z.string().max(200)),
   connections: z.record(z.string().max(30), z.boolean()),
   automations: z.record(z.string().max(30), z.boolean()),
+  dailyReport: z.object({ on: z.boolean(), emails: z.array(z.string().email()).max(10), phones: z.array(z.string().min(8).max(20)).max(10) }),
 }).partial();
 
 export default async function venues(app: FastifyInstance) {

@@ -50,6 +50,8 @@ export type VenueSettings = {
   socials?: Record<string, string>;
   connections?: Record<string, boolean>;
   automations?: Record<string, boolean>;
+  /** Morning summary of last night for the owner. Off unless switched on. */
+  dailyReport?: { on: boolean; emails: string[]; phones: string[] };
 };
 
 export const notifyChannel = pgEnum('notify_channel', ['email', 'whatsapp', 'both']);
@@ -244,6 +246,8 @@ export const reservations = pgTable('reservations', {
   /** Deposit due once accepted. 0 = none, the booking is confirmed on accept. */
   depositAmount: integer('deposit_amount').notNull().default(0),
   depositPaidAt: timestamp('deposit_paid_at', { withTimezone: true }),
+  /** The deposit went back to the guest: it no longer comes off the bill. */
+  depositRefundedAt: timestamp('deposit_refunded_at', { withTimezone: true }),
   minSpend: integer('min_spend').notNull().default(0),
   guestNote: text('guest_note').notNull().default(''),
   declineReason: text('decline_reason'),
@@ -447,6 +451,8 @@ export const ticketOrders = pgTable('ticket_orders', {
   kind: text('kind').notNull().default('sale'),
   invitedBy: uuid('invited_by').references(() => users.id),
   note: text('note'),
+  refundedAt: timestamp('refunded_at', { withTimezone: true }),
+  refundedAmount: integer('refunded_amount').notNull().default(0),
   createdAt: createdAt(),
 }, (t) => [uniqueIndex('ticket_orders_code_uq').on(t.code), index('ticket_orders_event_idx').on(t.eventId, t.status)]);
 
@@ -600,3 +606,44 @@ export const walletPassUpdates = pgTable('wallet_pass_updates', {
   serial: text('serial').primaryKey(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/* ---------------------------------------------------------------- refunds */
+
+/** Money given back: a ticket order or a booking deposit. */
+export const refunds = pgTable('refunds', {
+  id: id(),
+  venueId: venueRef(),
+  purpose: text('purpose').notNull(), // tickets | deposit
+  refId: uuid('ref_id').notNull(),
+  paymentId: uuid('payment_id').references(() => payments.id),
+  /** What the guest gets back. */
+  amount: integer('amount').notNull(),
+  /** The part that was the venue's money (ticket price or deposit). Booking fees are XTRA's. */
+  venueAmount: integer('venue_amount').notNull(),
+  /** paymob = sent back to the card/wallet; manual = staff give it back (cash, transfer). */
+  method: text('method').notNull(),
+  providerRef: text('provider_ref'),
+  reason: text('reason'),
+  by: uuid('by').references(() => users.id),
+  createdAt: createdAt(),
+}, (t) => [index('refunds_venue_idx').on(t.venueId, t.createdAt)]);
+
+/* ---------------------------------------------------------------- waitlist */
+
+/** Guests waiting for a sold-out event or ticket type. */
+export const waitlist = pgTable('waitlist', {
+  id: id(),
+  venueId: venueRef(),
+  eventId: uuid('event_id').notNull().references(() => events.id, { onDelete: 'cascade' }),
+  /** null = any ticket type. */
+  zoneId: uuid('zone_id').references(() => eventZones.id, { onDelete: 'set null' }),
+  guestId: uuid('guest_id').references(() => guests.id),
+  name: text('name').notNull(),
+  phone: text('phone').notNull(),
+  email: text('email'),
+  qty: integer('qty').notNull().default(1),
+  /** waiting, notified, bought, removed */
+  status: text('status').notNull().default('waiting'),
+  notifiedAt: timestamp('notified_at', { withTimezone: true }),
+  createdAt: createdAt(),
+}, (t) => [index('waitlist_event_idx').on(t.eventId, t.status)]);

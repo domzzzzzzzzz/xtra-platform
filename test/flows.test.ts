@@ -514,7 +514,7 @@ describe('Reports', () => {
     expect(r.status).toBe(200);
     expect(r.body.days.length).toBe(30);
     expect(r.body.money.tables).toBeGreaterThan(0);
-    expect(r.body.money.total).toBe(r.body.money.tables + r.body.money.tickets);
+    expect(r.body.money.total).toBe(r.body.money.tables + r.body.money.tickets + r.body.money.deposits - r.body.money.refunds);
     expect(r.body.money.byMethod.reduce((s: number, m: any) => s + m.total, 0)).toBe(r.body.money.tables);
     expect(r.body.bookings.requests).toBeGreaterThan(0);
     expect(r.body.topGuests.length).toBeGreaterThan(0);

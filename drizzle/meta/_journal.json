@@ -64,6 +64,13 @@
       "when": 1795783413972,
       "tag": "0008_wallet_updates",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1795800560714,
+      "tag": "0009_refunds_waitlist",
+      "breakpoints": true
     }
   ]
 }

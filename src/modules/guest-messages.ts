@@ -233,4 +233,40 @@ export function ticketOrderEmail(
   };
 }
 
+/** Money back on a ticket order or a deposit. */
+export function refundDone(v: VenueLike, g: Person, x: { what: string; amount: number; code: string; method: 'paymob' | 'manual' }): GuestMessage {
+  const amount = egp(x.amount);
+  const how = x.method === 'paymob'
+    ? 'It goes back to the card or wallet you paid with. Banks usually show it within 5 to 14 days.'
+    : `${v.name} will give it back to you directly.`;
+  return {
+    kind: 'refund', subject: `Refund of ${amount} · ${v.name}`,
+    body: `Hi ${g.firstName}, ${v.name} refunded ${amount} for your ${x.what} (${x.code}). ${how}`,
+    wa: { name: 'xtra_refund', header: v.name, params: [g.firstName, amount, x.what, x.code] },
+    mail: { venue: v, doc: {
+      preheader: `${amount} is on its way back to you.`, title: `We refunded ${amount}.`,
+      intro: `Hi ${g.firstName}, ${v.name} refunded your ${x.what}. ${how}`,
+      rows: [['Refund', amount], ['For', x.what], ['Reference', x.code]],
+      note: x.what.includes('ticket') ? 'The QR codes of this order no longer work at the door.' : 'Questions? Just reply to this email.',
+    } },
+  };
+}
+
+/** A place opened up for a guest on an event's waitlist. */
+export function waitlistOpen(v: VenueLike, g: Person, x: { event: string; when: string; eventId: string; type?: string | null }): GuestMessage {
+  const url = `${app()}/e/${x.eventId}`;
+  const what = x.type ? `${x.type} tickets for ${x.event}` : `tickets for ${x.event}`;
+  return {
+    kind: 'waitlist_open', subject: `Tickets are available again · ${x.event}`,
+    body: `Hi ${g.firstName}, good news: ${what} at ${v.name}, ${x.when}, are available again. They go to whoever books first: ${url}`,
+    wa: { name: 'xtra_waitlist_open', header: v.name, params: [g.firstName, x.event, x.when], button: `e/${x.eventId}` },
+    mail: { venue: v, doc: {
+      preheader: `A place opened up for ${x.event}.`, title: 'A place just opened up.',
+      intro: `Hi ${g.firstName}, you were on the waitlist and ${what}, ${x.when}, are available again. They go to whoever books first, so be quick.`,
+      button: { label: 'Get tickets', url },
+      note: 'You got this because you joined the waitlist. We only tell you once.',
+    } },
+  };
+}
+
 export { emailParts };

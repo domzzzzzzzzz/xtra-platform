@@ -72,8 +72,8 @@ export default async function reports(app: FastifyInstance) {
 }
 
 /** The headline numbers for one range: used for the range and the one before it. */
-async function totals(v: string, from: string, to: string) {
-  const [bills, bookings, deposits, tix] = await Promise.all([
+export async function totals(v: string, from: string, to: string) {
+  const [bills, bookings, deposits, tix, refunds] = await Promise.all([
     db.execute(sql`select count(*) as n, coalesce(sum(total),0) as total, coalesce(sum(service),0) as service, coalesce(sum(vat),0) as vat, coalesce(sum(party_size) filter (where reservation_id is null),0) as covers
       from tabs where venue_id = ${v} and status = 'paid' and ${night(sql`paid_at`)} between ${from} and ${to}`),
     db.execute(sql`select status, count(*) as n, coalesce(sum(party_size),0) as people from reservations
@@ -86,17 +86,21 @@ async function totals(v: string, from: string, to: string) {
           where o2.venue_id = ${v} and o2.status = 'paid' and o2.kind = 'sale' and ${night(sql`o2.paid_at`)} between ${from} and ${to}) as tickets,
         (select count(*) from tickets t join ticket_orders o2 on o2.id = t.order_id
           where o2.venue_id = ${v} and o2.status = 'paid' and o2.kind = 'invite' and ${night(sql`o2.paid_at`)} between ${from} and ${to}) as invited
-      from ticket_orders o where o.venue_id = ${v} and o.status = 'paid' and ${night(sql`o.paid_at`)} between ${from} and ${to}`),
+      from ticket_orders o where o.venue_id = ${v} and o.status in ('paid','refunded') and ${night(sql`o.paid_at`)} between ${from} and ${to}`),
+    db.execute(sql`select count(*) as n, coalesce(sum(venue_amount),0) as total, coalesce(sum(venue_amount) filter (where purpose = 'deposit'),0) as deposits, coalesce(sum(amount - venue_amount),0) as fees
+      from refunds where venue_id = ${v} and ${night(sql`created_at`)} between ${from} and ${to}`),
   ]);
-  const b = bills.rows[0] ?? {}, t = tix.rows[0] ?? {}, d = deposits.rows[0] ?? {};
+  const b = bills.rows[0] ?? {}, t = tix.rows[0] ?? {}, d = deposits.rows[0] ?? {}, rf = refunds.rows[0] ?? {};
   const st = Object.fromEntries(bookings.rows.map((r) => [String(r.status), { n: n(r.n), people: n(r.people) }]));
   const c = (k: string) => st[k]?.n ?? 0;
   const showed = c('arrived') + c('completed'), noShows = c('no_show');
   return {
     money: {
       tables: n(b.total), bills: n(b.n), avgBill: n(b.n) ? Math.round(n(b.total) / n(b.n)) : 0, service: n(b.service), vat: n(b.vat),
-      deposits: n(d.total), depositCount: n(d.n), tickets: n(t.net), ticketGross: n(t.gross), ticketDiscounts: n(t.discounts), bookingFees: n(t.fees),
-      total: n(b.total) + n(t.net),
+      deposits: n(d.total), depositCount: n(d.n), tickets: n(t.net), ticketGross: n(t.gross), ticketDiscounts: n(t.discounts), bookingFees: n(t.fees) - n(rf.fees),
+      refunds: n(rf.total), refundCount: n(rf.n),
+      /** Bills are paid after the deposit came off, so deposits are counted on their own. */
+      total: n(b.total) + n(t.net) + n(d.total) - n(rf.total),
     },
     bookings: {
       requests: Object.values(st).reduce((s, x) => s + x.n, 0), confirmed: c('confirmed') + showed + noShows, showed, noShows,

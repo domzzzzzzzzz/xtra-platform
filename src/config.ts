@@ -18,6 +18,8 @@ export const config = {
     token: env.WHATSAPP_TOKEN ?? '', phoneNumberId: env.WHATSAPP_PHONE_NUMBER_ID ?? '', language: env.WHATSAPP_TEMPLATE_LANGUAGE || 'en',
     /** Webhook: the word typed in Meta when adding the callback URL, and the app secret that signs each call. */
     verifyToken: env.WHATSAPP_VERIFY_TOKEN ?? '', appSecret: env.WHATSAPP_APP_SECRET ?? '',
+    /** Newer templates switched on once Meta approved them (comma list, e.g. xtra_refund,xtra_waitlist_open,xtra_daily_report). Until then those go by email only. */
+    newTemplates: (env.WHATSAPP_NEW_TEMPLATES ?? '').split(',').map((s) => s.trim()).filter(Boolean),
   },
   email: { resendKey: env.RESEND_API_KEY ?? '', from: env.EMAIL_FROM || 'XTRA <no-reply@xtra.eg>' },
   /** SMTP (e.g. Hostinger). Used for email when host, username and password are all set; it wins over Resend. */

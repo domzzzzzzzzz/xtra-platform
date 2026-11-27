@@ -13,6 +13,7 @@ import {
   availability, applyPromo, byCount, changeHold, changeHoldInput, checkoutInput, expireHolds, feeRatesFor, hold, holdInput, onTicketsPaid, orderByCode, placeOf, prepareCheckout, sendTickets,
 } from './ticketing-service.js';
 import { upsertGuest, ensureVenueGuest } from './guests-service.js';
+import { notifyWaitlist } from './waitlist.js';
 
 type P = { venueId: string };
 type PE = P & { eventId: string };
@@ -179,6 +180,7 @@ export default async function ticketing(app: FastifyInstance) {
     // A renamed section or relabelled seat: update the tickets already in wallets.
     const after = await ticketPlaces(e.id);
     walletChanged([...after].filter(([q, place]) => before.get(q) !== place).map(([q]) => q));
+    await notifyWaitlist(e.id).catch(() => 0);
     return eventMap(e.id);
   });
 
@@ -227,6 +229,7 @@ export default async function ticketing(app: FastifyInstance) {
     const [zone] = await db.update(schema.eventZones).set({ soldOut: b.soldOut })
       .where(and(eq(schema.eventZones.id, parse(z.string().uuid(), req.params.zoneId)), eq(schema.eventZones.eventId, e.id), sql`${schema.eventZones.kind} <> 'decor'`)).returning();
     if (!zone) throw notFound('Ticket type not found');
+    if (!zone.soldOut) await notifyWaitlist(e.id).catch(() => 0);
     return { id: zone.id, soldOut: zone.soldOut };
   });
 
@@ -380,6 +383,7 @@ export default async function ticketing(app: FastifyInstance) {
       .where(and(eq(schema.ticketOrders.id, parse(z.string().uuid(), req.params.orderId)), eq(schema.ticketOrders.eventId, e.id), eq(schema.ticketOrders.kind, 'invite'), eq(schema.ticketOrders.status, 'paid'))).returning();
     if (!o) throw notFound('Invitation not found');
     walletChanged(passTokens.order(o.id));
+    await notifyWaitlist(e.id).catch(() => 0);
     return { cancelled: true };
   });
 

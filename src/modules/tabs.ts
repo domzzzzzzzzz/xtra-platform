@@ -26,7 +26,7 @@ export async function billFor(tab: Tab) {
     const [r] = await db.select().from(schema.reservations).where(eq(schema.reservations.id, tab.reservationId));
     if (r) {
       minSpend = r.minSpend;
-      depositPaid = r.depositPaidAt ? r.depositAmount : 0;
+      depositPaid = r.depositPaidAt && !r.depositRefundedAt ? r.depositAmount : 0;
     }
   } else if (tab.tableId) {
     const [t] = await db.select().from(schema.floorItems).where(eq(schema.floorItems.id, tab.tableId));

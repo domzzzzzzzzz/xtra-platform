@@ -14,6 +14,7 @@ import { notifyGuest } from '../integrations/notify.js';
 import * as M from './guest-messages.js';
 import { localDate, nightOf } from '../lib/dates.js';
 import { MANAGERS, venueAccess } from '../lib/http.js';
+import { runDailyReports } from './daily-report.js';
 
 export const AUTOMATIONS = ['remind', 'thanks', 'bday', 'winback'] as const;
 type Auto = (typeof AUTOMATIONS)[number];
@@ -109,7 +110,7 @@ export async function runAutomations(now = new Date()) {
 
 /** Checks every 10 minutes. */
 export function startAutomations() {
-  const t = setInterval(() => { runAutomations().catch(() => {}); }, 10 * 60_000);
+  const t = setInterval(() => { runAutomations().catch(() => {}); runDailyReports().catch(() => {}); }, 10 * 60_000);
   t.unref();
   return t;
 }

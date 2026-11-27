@@ -40,6 +40,7 @@ const RULES: [method: string, test: RegExp, rule: Rule][] = [
   ['*', /^$/, { any: ['setup'] }],
   ['*', /^\/(staff|roles)(\/|$)/, { any: ['staff'] }],
   ['GET', /^\/reports$/, { any: ['reports'] }],
+  ['*', /^\/daily-report(\/|$)/, { any: ['setup', 'reports'] }],
   ['*', /^\/(messages|inbox)(\/|$)/, { any: ['messages'] }],
   ['POST', /^\/media$/, { any: ['setup', 'events', 'editor'] }],
   ['GET', /^\/floor$/, ANY],
