@@ -20,7 +20,7 @@ export const holdInput = z.object({
   ])).min(1).max(50),
 });
 
-/** Turns held orders past their 15 minutes into expired and frees their promo use. */
+/** Turns held orders past their hold time into expired and frees their promo use. */
 export async function expireHolds(c: Conn = db, eventId?: string) {
   const conds = [eq(schema.ticketOrders.status, 'held'), lt(schema.ticketOrders.holdExpiresAt, new Date())];
   if (eventId) conds.push(eq(schema.ticketOrders.eventId, eventId));
@@ -41,23 +41,34 @@ export async function expireHolds(c: Conn = db, eventId?: string) {
 export async function availability(c: Conn, eventId: string) {
   const zones = await c.select().from(schema.eventZones).where(eq(schema.eventZones.eventId, eventId));
   const seats = await c.select().from(schema.eventSeats).where(eq(schema.eventSeats.eventId, eventId));
-  const lines = await c.select({ zoneId: schema.ticketOrderLines.zoneId, seatId: schema.ticketOrderLines.seatId, qty: schema.ticketOrderLines.qty })
+  const lines = await c.select({ zoneId: schema.ticketOrderLines.zoneId, seatId: schema.ticketOrderLines.seatId, qty: schema.ticketOrderLines.qty, status: schema.ticketOrders.status })
     .from(schema.ticketOrderLines).innerJoin(schema.ticketOrders, eq(schema.ticketOrders.id, schema.ticketOrderLines.orderId))
     .where(and(eq(schema.ticketOrders.eventId, eventId), inArray(schema.ticketOrders.status, ['held', 'paid'])));
   const takenSeats = new Set(lines.filter((l) => l.seatId).map((l) => l.seatId!));
+  // Seats someone is paying for right now: still taken, but they may come back.
+  const paidSeats = new Set(lines.filter((l) => l.seatId && l.status === 'paid').map((l) => l.seatId!));
   const closedZones = new Set(zones.filter((z) => z.soldOut).map((z) => z.id));
   return {
     zones: zones.map((z) => {
       const zoneSeats = seats.filter((s) => s.zoneId === z.id && s.enabled);
       const used = lines.filter((l) => l.zoneId === z.id).reduce((s, l) => s + l.qty, 0);
       const left = z.kind === 'standing' ? Math.max(0, z.capacity - used)
+        : isFreeSeating(z) ? Math.max(0, zoneSeats.length - used)
         : z.kind === 'decor' ? 0 : zoneSeats.filter((s) => !takenSeats.has(s.id)).length;
       const closed = z.kind !== 'decor' && z.soldOut;
       return { ...z, markedSoldOut: closed, realLeft: left, left: closed ? 0 : left, soldOut: z.kind !== 'decor' && (closed || left === 0) };
     }),
-    seats: seats.map((s) => ({ ...s, sold: takenSeats.has(s.id), taken: takenSeats.has(s.id) || !s.enabled || closedZones.has(s.zoneId) })),
+    seats: seats.map((s) => ({
+      ...s, sold: takenSeats.has(s.id), held: takenSeats.has(s.id) && !paidSeats.has(s.id),
+      taken: takenSeats.has(s.id) || !s.enabled || closedZones.has(s.zoneId),
+    })),
   };
 }
+
+/** A seated section marked "free seating": guests sit anywhere in it, so it sells by count like standing. */
+export const isFreeSeating = (z: { kind: string; meta?: unknown }) => z.kind === 'seated' && Boolean((z.meta as { freeSeating?: boolean } | null)?.freeSeating);
+/** Zones sold by count (no seat picked). */
+export const byCount = (z: { kind: string; meta?: unknown }) => z.kind === 'standing' || isFreeSeating(z);
 
 /** A table zone is priced per seat and sold one whole table at a time. */
 const tableSeats = (z: Zone, seat: { seats: number } | null) => (z.kind === 'table' && seat ? Math.max(1, seat.seats) : 1);
@@ -69,43 +80,51 @@ export async function feeRatesFor(eventId: string) {
   return { feeBps: row?.e ?? row?.v ?? s.bookingFeeBps, feeVatBps: s.feeVatBps };
 }
 
-/** Hold seats for 15 minutes. */
+type Line = { zoneId: string; seatId: string | null; qty: number; unitPrice: number };
+
+/** Locks the event and turns the picked items into priced order lines, checking nothing is taken. */
+async function linesFor(tx: Conn, eventId: string, items: z.infer<typeof holdInput>['items']) {
+  const [event] = await tx.select().from(schema.events).where(eq(schema.events.id, eventId)).for('update');
+  if (!event || event.status !== 'published') throw notFound('Event not found');
+  if (event.inviteOnly) throw badRequest('This event is by invitation only', 'invite_only');
+  if (event.startsAt.getTime() + 6 * 3600_000 < Date.now()) throw badRequest('Sales for this event are closed', 'sales_closed');
+  await expireHolds(tx, eventId);
+  const av = await availability(tx, eventId);
+
+  const lines: Line[] = [];
+  const want = new Map<string, number>();
+  const seen = new Set<string>();
+  let ticketCount = 0;
+  for (const it of items) {
+    const zone = av.zones.find((z) => z.id === it.zoneId);
+    if (!zone || zone.kind === 'decor') throw badRequest('Unknown ticket type');
+    if (zone.markedSoldOut) throw conflict(`${zone.name} is sold out`, 'sold_out');
+    if ('qty' in it) {
+      if (!byCount(zone)) throw badRequest(`Pick a seat or table in ${zone.name}`);
+      want.set(zone.id, (want.get(zone.id) ?? 0) + it.qty);
+      if (want.get(zone.id)! > zone.left) throw conflict(zone.left ? `Only ${zone.left} left in ${zone.name}` : `${zone.name} is sold out`, 'sold_out');
+      lines.push({ zoneId: zone.id, seatId: null, qty: it.qty, unitPrice: zone.price });
+      ticketCount += it.qty;
+    } else {
+      const seat = av.seats.find((s) => s.id === it.seatId && s.zoneId === zone.id);
+      if (!seat) throw badRequest('Unknown seat');
+      if (seat.taken || seen.has(seat.id)) throw conflict(`${placeOf(zone.kind, '', seat.label) || seat.label} was just taken`, 'seat_taken');
+      seen.add(seat.id);
+      const n = tableSeats(zone, seat);
+      lines.push({ zoneId: zone.id, seatId: seat.id, qty: 1, unitPrice: zone.price * n });
+      ticketCount += n;
+    }
+  }
+  if (ticketCount > event.maxPerOrder) throw badRequest(`Max ${event.maxPerOrder} tickets per order`, 'too_many');
+  return { event, lines };
+}
+
+/** Hold seats for `config.holdMinutes` (10 minutes). The clock starts at the first pick. */
 export async function hold(eventId: string, input: z.infer<typeof holdInput>) {
   const rates = await feeRatesFor(eventId);
   return db.transaction(async (tx) => {
-    // One hold at a time per event: simple and it can never oversell.
-    const [event] = await tx.select().from(schema.events).where(eq(schema.events.id, eventId)).for('update');
-    if (!event || event.status !== 'published') throw notFound('Event not found');
-    if (event.startsAt.getTime() + 6 * 3600_000 < Date.now()) throw badRequest('Sales for this event are closed', 'sales_closed');
-    await expireHolds(tx, eventId);
-    const av = await availability(tx, eventId);
-
-    const lines: { zoneId: string; seatId: string | null; qty: number; unitPrice: number }[] = [];
-    const want = new Map<string, number>();
-    const seen = new Set<string>();
-    let ticketCount = 0;
-    for (const it of input.items) {
-      const zone = av.zones.find((z) => z.id === it.zoneId);
-      if (!zone || zone.kind === 'decor') throw badRequest('Unknown ticket type');
-      if (zone.markedSoldOut) throw conflict(`${zone.name} is sold out`, 'sold_out');
-      if ('qty' in it) {
-        if (zone.kind !== 'standing') throw badRequest(`Pick a seat or table in ${zone.name}`);
-        want.set(zone.id, (want.get(zone.id) ?? 0) + it.qty);
-        if (want.get(zone.id)! > zone.left) throw conflict(zone.left ? `Only ${zone.left} left in ${zone.name}` : `${zone.name} is sold out`, 'sold_out');
-        lines.push({ zoneId: zone.id, seatId: null, qty: it.qty, unitPrice: zone.price });
-        ticketCount += it.qty;
-      } else {
-        const seat = av.seats.find((s) => s.id === it.seatId && s.zoneId === zone.id);
-        if (!seat) throw badRequest('Unknown seat');
-        if (seat.taken || seen.has(seat.id)) throw conflict(`${seat.label} was just taken`, 'seat_taken');
-        seen.add(seat.id);
-        const n = tableSeats(zone, seat);
-        lines.push({ zoneId: zone.id, seatId: seat.id, qty: 1, unitPrice: zone.price * n });
-        ticketCount += n;
-      }
-    }
-    if (ticketCount > event.maxPerOrder) throw badRequest(`Max ${event.maxPerOrder} tickets per order`, 'too_many');
-
+    // One hold at a time per event (row lock on the event): simple and it can never oversell.
+    const { event, lines } = await linesFor(tx, eventId, input.items);
     const totals = computeTicketTotals({ lines, percentOff: 0, ...rates });
     const [order] = await tx.insert(schema.ticketOrders).values({
       code: shortCode(), venueId: event.venueId, eventId, status: 'held',
@@ -114,6 +133,45 @@ export async function hold(eventId: string, input: z.infer<typeof holdInput>) {
     await tx.insert(schema.ticketOrderLines).values(lines.map((l) => ({ ...l, orderId: order.id })));
     return order;
   });
+}
+
+export const changeHoldInput = z.object({ items: holdInput.shape.items.element.array().max(50) });
+
+/**
+ * The guest added or dropped a seat while their seats are held. The clock keeps running
+ * (it does not restart), the promo code is taken off (they apply it again at payment),
+ * and an empty pick lets every seat go.
+ */
+export async function changeHold(code: string, input: z.infer<typeof changeHoldInput>) {
+  const o = await orderByCode(code);
+  await heldOnly(o);
+  return db.transaction(async (tx) => {
+    // Same lock order as hold(): the event first, then the order.
+    await tx.select({ id: schema.events.id }).from(schema.events).where(eq(schema.events.id, o.eventId)).for('update');
+    const [cur] = await tx.select().from(schema.ticketOrders).where(eq(schema.ticketOrders.id, o.id)).for('update');
+    if (cur.status !== 'held') throw conflict(`Your ${config.holdMinutes} minutes are up. Please pick your seats again.`, 'hold_expired');
+    // Free this order's own seats first so the guest can keep them.
+    await tx.delete(schema.ticketOrderLines).where(eq(schema.ticketOrderLines.orderId, cur.id));
+    if (cur.promoCodeId) await tx.update(schema.promoCodes).set({ usedCount: sql`greatest(${schema.promoCodes.usedCount} - 1, 0)` }).where(eq(schema.promoCodes.id, cur.promoCodeId));
+    if (!input.items.length) {
+      const [gone] = await tx.update(schema.ticketOrders).set({ status: 'expired', promoCodeId: null }).where(eq(schema.ticketOrders.id, cur.id)).returning();
+      return gone;
+    }
+    const { lines } = await linesFor(tx, cur.eventId, input.items);
+    const totals = computeTicketTotals({ lines, percentOff: 0, feeBps: cur.feeBps, feeVatBps: cur.feeVatBps });
+    await tx.insert(schema.ticketOrderLines).values(lines.map((l) => ({ ...l, orderId: cur.id })));
+    const [next] = await tx.update(schema.ticketOrders).set({ ...totals, promoCodeId: null }).where(eq(schema.ticketOrders.id, cur.id)).returning();
+    return next;
+  });
+}
+
+/** How a seat reads for a guest: "Table A3", "Row F, Seat 12", or the zone name for standing. */
+export function placeOf(kind: string, zoneName: string, seatLabel: string | null | undefined) {
+  if (!seatLabel) return kind === 'seated' && zoneName ? `${zoneName} · Free seating` : zoneName;
+  if (kind === 'table') return zoneName ? `${zoneName} · Table ${seatLabel}` : `Table ${seatLabel}`;
+  const [row, num] = seatLabel.split('-');
+  const s = num ? `Row ${row}, Seat ${num}` : `Seat ${seatLabel}`;
+  return zoneName ? `${zoneName} · ${s}` : s;
 }
 
 export async function orderByCode(code: string) {
@@ -125,7 +183,7 @@ export async function orderByCode(code: string) {
 async function heldOnly(o: Order) {
   if (o.status !== 'held' || o.holdExpiresAt < new Date()) {
     if (o.status === 'held') await expireHolds(db, o.eventId);
-    throw conflict('Your 15 minutes are up. Please pick your seats again.', 'hold_expired');
+    throw conflict(`Your ${config.holdMinutes} minutes are up. Please pick your seats again.`, 'hold_expired');
   }
 }
 
@@ -238,12 +296,12 @@ export async function sendTickets(o: Order, opts: { channels?: Channel[] } = {})
   const [event] = await db.select().from(schema.events).where(eq(schema.events.id, o.eventId));
   const [venue] = await db.select().from(schema.venues).where(eq(schema.venues.id, o.venueId));
   if (o.guestId && !invite) await recordSpend(db, o.venueId, o.guestId, o.subtotal - o.discount, o.id, 'tickets', false);
-  const list = await db.select({ t: schema.tickets, zone: schema.eventZones.name, seat: schema.eventSeats.label }).from(schema.tickets)
+  const list = await db.select({ t: schema.tickets, zone: schema.eventZones.name, kind: schema.eventZones.kind, seat: schema.eventSeats.label }).from(schema.tickets)
     .innerJoin(schema.eventZones, eq(schema.eventZones.id, schema.tickets.zoneId))
     .leftJoin(schema.eventSeats, eq(schema.eventSeats.id, schema.tickets.seatId))
     .where(eq(schema.tickets.orderId, o.id));
   const when = event.startsAt.toLocaleString('en-GB', { timeZone: venue.timezone, weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true });
-  const typeOf = (x: (typeof list)[number]) => (x.seat ? `${x.zone} · ${x.seat}` : x.zone);
+  const typeOf = (x: (typeof list)[number]) => placeOf(x.kind, x.zone, x.seat);
   const nameOf = (x: (typeof list)[number]) => `${x.t.firstName} ${x.t.lastName}`.trim() || 'Guest';
   const [buyer] = o.guestId ? await db.select().from(schema.guests).where(eq(schema.guests.id, o.guestId)) : [];
   const buyerName = buyer?.firstName || list[0]?.t.firstName || 'there';
@@ -291,9 +349,9 @@ export async function sendTickets(o: Order, opts: { channels?: Channel[] } = {})
   }
 }
 
-/** Run every minute: free seats whose 15 minutes ran out. */
+/** Run every 20 seconds: free seats whose hold ran out, so other guests see them again fast. */
 export function startHoldSweeper() {
-  const t = setInterval(() => { expireHolds().catch(() => {}); }, 60_000);
+  const t = setInterval(() => { expireHolds().catch(() => {}); }, 20_000);
   t.unref();
   return t;
 }

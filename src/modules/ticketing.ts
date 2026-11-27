@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
-import { db, schema } from '../db/index.js';
+import { db, schema, type Conn } from '../db/index.js';
 import { parse, venueAccess, MANAGERS } from '../lib/http.js';
 import { badRequest, conflict, notFound } from '../lib/errors.js';
 import { normalizePhone, promoCode, qrToken, shortCode, slugify } from '../lib/codes.js';
@@ -9,7 +9,7 @@ import { config } from '../config.js';
 import { startPayment } from './payments.js';
 import { imageRef } from './media.js';
 import {
-  availability, applyPromo, checkoutInput, expireHolds, feeRatesFor, hold, holdInput, onTicketsPaid, orderByCode, prepareCheckout, sendTickets,
+  availability, applyPromo, byCount, changeHold, changeHoldInput, checkoutInput, expireHolds, feeRatesFor, hold, holdInput, onTicketsPaid, orderByCode, placeOf, prepareCheckout, sendTickets,
 } from './ticketing-service.js';
 import { upsertGuest, ensureVenueGuest } from './guests-service.js';
 
@@ -29,6 +29,7 @@ const eventBody = z.object({
   endsAt: z.coerce.date().nullable().optional(),
   bookingFeeBps: z.number().int().min(0).max(5000).nullable().optional(),
   maxPerOrder: z.number().int().min(1).max(100).default(10),
+  inviteOnly: z.boolean().default(false),
 });
 
 const zoneBody = z.object({
@@ -43,6 +44,7 @@ const zoneBody = z.object({
   color: z.string().nullish(),
   sort: z.number().int().default(0),
   soldOut: z.boolean().optional(),
+  meta: z.record(z.unknown()).nullish(),
   seats: z.array(z.object({
     id: z.string().uuid().optional(), label: z.string().min(1).max(20), x: z.number().default(0), y: z.number().default(0),
     seats: z.number().int().min(1).max(50).default(1), shape: z.string().max(20).nullish(), rotation: z.number().default(0), enabled: z.boolean().default(true),
@@ -143,10 +145,15 @@ export default async function ticketing(app: FastifyInstance) {
           [{ id: zoneId }] = await tx.insert(schema.eventZones).values({ ...values, eventId: e.id }).returning({ id: schema.eventZones.id });
         }
         const exSeats = await tx.select().from(schema.eventSeats).where(eq(schema.eventSeats.zoneId, zoneId!));
+        // A seat sent without its id but with a label the zone already has is that same seat
+        // (the editor rebuilt the rows before it knew the ids). Keeps sold seats safe.
+        const byLabel = new Map(exSeats.map((s) => [s.label, s.id]));
+        const claimed = new Set(seats.filter((s) => s.id).map((s) => s.id!));
+        for (const s of seats) if (!s.id && byLabel.has(s.label) && !claimed.has(byLabel.get(s.label)!)) { s.id = byLabel.get(s.label); claimed.add(s.id!); }
         const keepSeats = new Set(seats.filter((s) => s.id).map((s) => s.id!));
         for (const s of exSeats) {
           if (keepSeats.has(s.id)) continue;
-          if (soldSeats.has(s.id)) throw conflict(`Seat ${s.label} is sold and cannot be removed`, 'seat_has_sales');
+          if (soldSeats.has(s.id)) throw conflict(`${placeOf(zb.kind, zb.name, s.label)} is sold and cannot be removed`, 'seat_has_sales');
           await tx.delete(schema.eventSeats).where(eq(schema.eventSeats.id, s.id));
         }
         for (const s of seats) {
@@ -229,7 +236,7 @@ export default async function ticketing(app: FastifyInstance) {
       .where(and(eq(schema.ticketOrders.eventId, e.id), eq(schema.ticketOrders.kind, 'invite'), inArray(schema.ticketOrders.status, ['paid', 'cancelled'])))
       .orderBy(desc(schema.ticketOrders.createdAt));
     const ids = rows.map((r) => r.o.id);
-    const tix = ids.length ? await db.select({ orderId: schema.tickets.orderId, first: schema.tickets.firstName, last: schema.tickets.lastName, zone: schema.eventZones.name, seat: schema.eventSeats.label, inAt: schema.tickets.checkedInAt })
+    const tix = ids.length ? await db.select({ orderId: schema.tickets.orderId, first: schema.tickets.firstName, last: schema.tickets.lastName, zone: schema.eventZones.name, kind: schema.eventZones.kind, seat: schema.eventSeats.label, inAt: schema.tickets.checkedInAt })
       .from(schema.tickets).innerJoin(schema.eventZones, eq(schema.eventZones.id, schema.tickets.zoneId)).leftJoin(schema.eventSeats, eq(schema.eventSeats.id, schema.tickets.seatId))
       .where(inArray(schema.tickets.orderId, ids)) : [];
     return rows.map(({ o, by }) => {
@@ -237,53 +244,106 @@ export default async function ticketing(app: FastifyInstance) {
       return {
         id: o.id, code: o.code, status: o.status === 'paid' ? 'active' : 'cancelled', name: mine[0] ? `${mine[0].first} ${mine[0].last}`.trim() : '',
         phone: o.buyerPhone, email: o.buyerEmail, note: o.note, tickets: mine.length, checkedIn: mine.filter((t) => t.inAt).length,
-        type: mine[0] ? (mine[0].seat ? `${mine[0].zone} · ${mine[0].seat}` : mine[0].zone) : '', invitedBy: by, createdAt: o.createdAt,
+        type: mine[0] ? placeOf(mine[0].kind, mine[0].zone, mine[0].seat) : '', invitedBy: by, createdAt: o.createdAt,
       };
     });
   });
+
+  type Ev = typeof schema.events.$inferSelect;
+  type InviteIn = z.infer<typeof inviteBody>;
+  /** One invitation inside a locked transaction: checks the place, writes the free order and its tickets. */
+  async function inviteOne(tx: Conn, e: Ev, by: string, b: InviteIn) {
+    const av = await availability(tx, e.id);
+    const zone = av.zones.find((x) => x.id === b.zoneId);
+    if (!zone || zone.kind === 'decor') throw badRequest('Unknown ticket type');
+    let seat: (typeof av.seats)[number] | undefined;
+    let count = b.qty;
+    if (byCount(zone)) {
+      if (b.qty > zone.realLeft) throw conflict(zone.realLeft ? `Only ${zone.realLeft} left in ${zone.name}` : `${zone.name} has no places left`, 'sold_out');
+    } else {
+      seat = av.seats.find((x) => x.id === b.seatId && x.zoneId === zone.id);
+      if (!seat) throw badRequest(zone.kind === 'table' ? `Pick a table in ${zone.name}` : `Pick a seat in ${zone.name}`, 'seat_needed');
+      if (seat.sold || !seat.enabled) throw conflict(`${placeOf(zone.kind, zone.name, seat.label)} is already taken`, 'seat_taken');
+      count = zone.kind === 'table' ? Math.max(1, seat.seats) : 1;
+    }
+    const guest = b.phone ? await upsertGuest(tx, { firstName: b.firstName, lastName: b.lastName, phone: b.phone, email: b.email }) : null;
+    if (guest) await ensureVenueGuest(tx, e.venueId, guest.id);
+    const now = new Date();
+    const [o] = await tx.insert(schema.ticketOrders).values({
+      code: shortCode(), venueId: e.venueId, eventId: e.id, guestId: guest?.id ?? null, status: 'paid', paidAt: now, holdExpiresAt: now,
+      kind: 'invite', invitedBy: by, note: b.note || null, buyerEmail: b.email ?? null, buyerPhone: guest?.phone ?? null,
+    }).returning();
+    await tx.insert(schema.ticketOrderLines).values({ orderId: o.id, zoneId: zone.id, seatId: seat?.id ?? null, qty: seat ? 1 : b.qty, unitPrice: 0 });
+    await tx.insert(schema.tickets).values(Array.from({ length: count }, (_, i) => ({
+      orderId: o.id, eventId: e.id, zoneId: zone.id, seatId: seat?.id ?? null,
+      // Extra places show at the door as "Guest of Sara".
+      firstName: i === 0 ? b.firstName : 'Guest', lastName: i === 0 ? b.lastName : `of ${b.firstName}`,
+      email: i === 0 ? b.email ?? null : null, phone: i === 0 ? guest?.phone ?? null : null, qrToken: qrToken(),
+    })));
+    return { order: o, count, place: placeOf(zone.kind, zone.name, seat?.label) };
+  }
+  const checkChannels = (b: { channels: string[]; phone?: string; email?: string }) => {
+    if (b.channels.includes('whatsapp') && !b.phone) throw badRequest('Add a WhatsApp number, or send by email only', 'phone_needed');
+    if (b.channels.includes('email') && !b.email) throw badRequest('Add an email, or send by WhatsApp only', 'email_needed');
+  };
 
   app.post<{ Params: PE }>('/venues/:venueId/events/:eventId/invites', async (req, reply) => {
     const { user } = await venueAccess(req, req.params.venueId, MANAGERS);
     const e = await loadEvent(req.params.venueId, req.params.eventId);
     const b = parse(inviteBody, req.body);
-    if (b.channels.includes('whatsapp') && !b.phone) throw badRequest('Add a WhatsApp number, or send by email only', 'phone_needed');
-    if (b.channels.includes('email') && !b.email) throw badRequest('Add an email, or send by WhatsApp only', 'email_needed');
+    checkChannels(b);
     if (e.startsAt.getTime() + 6 * 3600_000 < Date.now()) throw badRequest('This event is over', 'sales_closed');
-    const { order, count } = await db.transaction(async (tx) => {
+    const { order, count, place } = await db.transaction(async (tx) => {
+      await tx.select({ id: schema.events.id }).from(schema.events).where(eq(schema.events.id, e.id)).for('update');
+      await expireHolds(tx, e.id);
+      return inviteOne(tx, e, user.sub, b);
+    });
+    await sendTickets(order, { channels: b.channels });
+    reply.code(201);
+    return { id: order.id, code: order.code, tickets: count, place };
+  });
+
+  /**
+   * Invite a whole guest list into one zone. Free-seating and standing zones just count;
+   * assigned-seat zones give each person the next free seat (row by row, seat by seat).
+   * All or nothing: if the zone is too small, nobody is invited.
+   */
+  app.post<{ Params: PE }>('/venues/:venueId/events/:eventId/invites/bulk', async (req, reply) => {
+    const { user } = await venueAccess(req, req.params.venueId, MANAGERS);
+    const e = await loadEvent(req.params.venueId, req.params.eventId);
+    const b = parse(z.object({
+      zoneId: z.string().uuid(),
+      people: z.array(z.object({ firstName: z.string().trim().min(1).max(60), lastName: z.string().trim().max(60).default(''), phone: z.string().min(8).max(20).optional(), email: z.string().email().optional() })).min(1).max(500),
+      channels: z.array(z.enum(['whatsapp', 'email'])).min(1).default(['whatsapp', 'email']),
+      note: z.string().trim().max(300).optional(),
+    }), req.body);
+    // Each person goes by the channels they have.
+    if (b.people.some((p) => !p.phone && !p.email)) throw badRequest('Every person needs a WhatsApp number or an email', 'contact_needed');
+    if (e.startsAt.getTime() + 6 * 3600_000 < Date.now()) throw badRequest('This event is over', 'sales_closed');
+    const made = await db.transaction(async (tx) => {
       await tx.select({ id: schema.events.id }).from(schema.events).where(eq(schema.events.id, e.id)).for('update');
       await expireHolds(tx, e.id);
       const av = await availability(tx, e.id);
       const zone = av.zones.find((x) => x.id === b.zoneId);
       if (!zone || zone.kind === 'decor') throw badRequest('Unknown ticket type');
-      let seat: (typeof av.seats)[number] | undefined;
-      let count = b.qty;
-      if (zone.kind === 'standing') {
-        if (b.qty > zone.realLeft) throw conflict(zone.realLeft ? `Only ${zone.realLeft} left in ${zone.name}` : `${zone.name} has no places left`, 'sold_out');
-      } else {
-        seat = av.seats.find((x) => x.id === b.seatId && x.zoneId === zone.id);
-        if (!seat) throw badRequest(`Pick a table in ${zone.name}`, 'seat_needed');
-        if (seat.sold || !seat.enabled) throw conflict(`${seat.label} is already taken`, 'seat_taken');
-        count = zone.kind === 'table' ? Math.max(1, seat.seats) : 1;
+      let free: string[] = [];
+      if (!byCount(zone)) {
+        const order = (l: string) => { const [r, n] = l.split('-'); return [r.length, r, Number(n) || 0] as const; };
+        free = av.seats.filter((s) => s.zoneId === zone.id && !s.taken && s.enabled)
+          .sort((x, y) => { const a = order(x.label), c = order(y.label); return a[0] - c[0] || a[1].localeCompare(c[1]) || a[2] - c[2]; }).map((s) => s.id);
+        if (free.length < b.people.length) throw conflict(`${zone.name} has ${free.length} free ${zone.kind === 'table' ? 'tables' : 'seats'} for ${b.people.length} people`, 'sold_out');
+      } else if (zone.realLeft < b.people.length) throw conflict(`${zone.name} has ${zone.realLeft} places for ${b.people.length} people`, 'sold_out');
+      const out = [];
+      for (const [i, p] of b.people.entries()) {
+        const channels = b.channels.filter((c) => (c === 'whatsapp' ? p.phone : p.email));
+        const r = await inviteOne(tx, e, user.sub, { ...p, zoneId: zone.id, seatId: free[i], qty: 1, channels: channels.length ? channels : [p.phone ? 'whatsapp' : 'email'], note: b.note });
+        out.push({ ...r, channels: channels.length ? channels : [p.phone ? 'whatsapp' : 'email'] as ('whatsapp' | 'email')[] });
       }
-      const guest = b.phone ? await upsertGuest(tx, { firstName: b.firstName, lastName: b.lastName, phone: b.phone, email: b.email }) : null;
-      if (guest) await ensureVenueGuest(tx, e.venueId, guest.id);
-      const now = new Date();
-      const [o] = await tx.insert(schema.ticketOrders).values({
-        code: shortCode(), venueId: e.venueId, eventId: e.id, guestId: guest?.id ?? null, status: 'paid', paidAt: now, holdExpiresAt: now,
-        kind: 'invite', invitedBy: user.sub, note: b.note || null, buyerEmail: b.email ?? null, buyerPhone: guest?.phone ?? null,
-      }).returning();
-      await tx.insert(schema.ticketOrderLines).values({ orderId: o.id, zoneId: zone.id, seatId: seat?.id ?? null, qty: seat ? 1 : b.qty, unitPrice: 0 });
-      await tx.insert(schema.tickets).values(Array.from({ length: count }, (_, i) => ({
-        orderId: o.id, eventId: e.id, zoneId: zone.id, seatId: seat?.id ?? null,
-        // Extra places show at the door as "Guest of Sara".
-        firstName: i === 0 ? b.firstName : 'Guest', lastName: i === 0 ? b.lastName : `of ${b.firstName}`,
-        email: i === 0 ? b.email ?? null : null, phone: i === 0 ? guest?.phone ?? null : null, qrToken: qrToken(),
-      })));
-      return { order: o, count };
+      return out;
     });
-    await sendTickets(order, { channels: b.channels });
+    for (const m of made) await sendTickets(m.order, { channels: m.channels });
     reply.code(201);
-    return { id: order.id, code: order.code, tickets: count };
+    return { invited: made.length, places: made.map((m) => m.place) };
   });
 
   /* Send the invitation again (same QR codes). */
@@ -425,13 +485,13 @@ export default async function ticketing(app: FastifyInstance) {
     const rates = await feeRatesFor(e.id);
     const priced = map.zones.filter((z) => z.kind !== 'decor');
     return {
-      event: { id: e.id, title: e.title, posterUrl: e.posterUrl, description: e.description, lineup: e.lineup, color: e.color, seatMap: e.seatMap, rules: e.rules, startsAt: e.startsAt, endsAt: e.endsAt, maxPerOrder: e.maxPerOrder },
+      event: { id: e.id, title: e.title, posterUrl: e.posterUrl, description: e.description, lineup: e.lineup, color: e.color, seatMap: e.seatMap, rules: e.rules, startsAt: e.startsAt, endsAt: e.endsAt, maxPerOrder: e.maxPerOrder, inviteOnly: e.inviteOnly },
       venue: { name: v.name, slug: v.slug, logoUrl: v.logoUrl, address: v.address, mapUrl: v.mapUrl, lat: v.mapLat, lng: v.mapLng, photoUrl: v.photoUrl, instagram: v.instagram, tiktok: v.tiktok, where: v.settings.where ?? v.address ?? '', color: v.settings.color ?? null, timezone: v.timezone },
       priceFrom: priced.length ? Math.min(...priced.map((z) => z.price)) : 0,
       fees: rates,
       holdMinutes: config.holdMinutes,
       zones: map.zones.map(({ capacity: _c, realLeft: _r, soldOut: _s, markedSoldOut, ...z }) => ({ ...z, soldOut: z.left === 0, closed: markedSoldOut })),
-      seats: map.seats.map((s) => ({ id: s.id, zoneId: s.zoneId, label: s.label, x: s.x, y: s.y, seats: s.seats, shape: s.shape, rotation: s.rotation, taken: s.taken })),
+      seats: map.seats.map((s) => ({ id: s.id, zoneId: s.zoneId, label: s.label, x: s.x, y: s.y, seats: s.seats, shape: s.shape, rotation: s.rotation, taken: s.taken, held: s.held })),
     };
   });
 
@@ -446,7 +506,10 @@ export default async function ticketing(app: FastifyInstance) {
 
   app.get<{ Params: { code: string } }>('/public/orders/:code', async (req) => publicOrder(await orderByCode(req.params.code)));
 
-  /* Let go of held seats (the guest went back to change their picks). */
+  /* Add or drop seats on a hold that is already running (the clock keeps going). */
+  app.put<{ Params: { code: string } }>('/public/orders/:code/items', async (req) => publicOrder(await changeHold(req.params.code, parse(changeHoldInput, req.body))));
+
+  /* Let go of held seats (the guest left or went back to change their picks). */
   app.post<{ Params: { code: string } }>('/public/orders/:code/release', async (req) => {
     const o = await orderByCode(req.params.code);
     const [done] = await db.update(schema.ticketOrders).set({ status: 'expired' })
@@ -478,19 +541,19 @@ export default async function ticketing(app: FastifyInstance) {
 }
 
 async function publicOrder(o: typeof schema.ticketOrders.$inferSelect) {
-  const rows = await db.select({ zone: schema.eventZones.name, kind: schema.eventZones.kind, seat: schema.eventSeats.label, seats: schema.eventSeats.seats, qty: schema.ticketOrderLines.qty, unitPrice: schema.ticketOrderLines.unitPrice })
+  const rows = await db.select({ zoneId: schema.ticketOrderLines.zoneId, seatId: schema.ticketOrderLines.seatId, zone: schema.eventZones.name, kind: schema.eventZones.kind, seat: schema.eventSeats.label, seats: schema.eventSeats.seats, qty: schema.ticketOrderLines.qty, unitPrice: schema.ticketOrderLines.unitPrice })
     .from(schema.ticketOrderLines).innerJoin(schema.eventZones, eq(schema.eventZones.id, schema.ticketOrderLines.zoneId))
     .leftJoin(schema.eventSeats, eq(schema.eventSeats.id, schema.ticketOrderLines.seatId)).where(eq(schema.ticketOrderLines.orderId, o.id))
     .orderBy(asc(schema.eventZones.sort), asc(schema.eventSeats.label));
   /** `tickets` is how many people the line admits: a table admits one per seat. */
-  const lines = rows.map(({ seats, ...l }) => ({ ...l, tickets: l.kind === 'table' && l.seat ? Math.max(1, seats ?? 1) : l.qty }));
+  const lines = rows.map(({ seats, ...l }) => ({ ...l, place: l.kind === 'table' ? placeOf('table', '', l.seat) : placeOf(l.kind, l.zone, l.seat), tickets: l.kind === 'table' && l.seat ? Math.max(1, seats ?? 1) : l.qty }));
   let promo: string | null = null;
   if (o.promoCodeId) [{ code: promo }] = await db.select({ code: schema.promoCodes.code }).from(schema.promoCodes).where(eq(schema.promoCodes.id, o.promoCodeId));
   const tickets = o.status === 'paid'
-    ? (await db.select({ firstName: schema.tickets.firstName, lastName: schema.tickets.lastName, qrToken: schema.tickets.qrToken, zone: schema.eventZones.name, seat: schema.eventSeats.label })
+    ? (await db.select({ firstName: schema.tickets.firstName, lastName: schema.tickets.lastName, qrToken: schema.tickets.qrToken, zone: schema.eventZones.name, kind: schema.eventZones.kind, seat: schema.eventSeats.label })
       .from(schema.tickets).innerJoin(schema.eventZones, eq(schema.eventZones.id, schema.tickets.zoneId)).leftJoin(schema.eventSeats, eq(schema.eventSeats.id, schema.tickets.seatId))
       .where(eq(schema.tickets.orderId, o.id)).orderBy(asc(schema.eventZones.sort), asc(schema.eventSeats.label), asc(schema.tickets.lastName)))
-      .map((t) => ({ name: `${t.firstName} ${t.lastName}`.trim(), label: t.seat ? `Table ${t.seat}` : t.zone, url: `${config.publicAppUrl}/t/${t.qrToken}` }))
+      .map((t) => ({ name: `${t.firstName} ${t.lastName}`.trim(), label: t.kind === 'table' ? placeOf('table', '', t.seat) : placeOf(t.kind, t.zone, t.seat), url: `${config.publicAppUrl}/t/${t.qrToken}` }))
     : [];
   return {
     code: o.code, status: o.status, eventId: o.eventId, holdExpiresAt: o.holdExpiresAt,

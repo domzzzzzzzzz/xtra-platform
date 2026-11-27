@@ -1,0 +1,1 @@
+ALTER TABLE "event_zones" ADD COLUMN "meta" jsonb;

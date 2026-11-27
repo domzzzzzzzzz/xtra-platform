@@ -10,6 +10,7 @@ import { notifyGuest } from '../integrations/notify.js';
 import * as M from './guest-messages.js';
 import { config } from '../config.js';
 import { upsertGuest, ensureVenueGuest, recordSpend } from './guests-service.js';
+import { placeOf } from './ticketing-service.js';
 
 type Venue = typeof schema.venues.$inferSelect;
 type Reservation = typeof schema.reservations.$inferSelect;
@@ -384,7 +385,7 @@ async function checkTable(venueId: string, tableId: string, r: Reservation) {
 
 export type CheckInResult =
   | { ok: true; type: 'booking'; name: string; party: number; arrivedCount: number; table: string | null; minSpend: number; note: string }
-  | { ok: true; type: 'ticket'; name: string; ticketType: string; event: string }
+  | { ok: true; type: 'ticket'; name: string; ticketType: string; event: string; seat: string | null }
   | { ok: false; reason: 'unknown' | 'already_in' | 'not_confirmed' | 'wrong_night' | 'wrong_venue'; name?: string; at?: Date | null };
 
 export async function checkIn(venueId: string, token: string): Promise<CheckInResult> {
@@ -413,10 +414,11 @@ export async function checkIn(venueId: string, token: string): Promise<CheckInRe
     return { ok: true, type: 'booking', name: p.name, party: r.partySize, arrivedCount: n, table, minSpend: r.minSpend, note: r.guestNote };
   }
 
-  const [t] = await db.select({ t: schema.tickets, o: schema.ticketOrders, e: schema.events, z: schema.eventZones }).from(schema.tickets)
+  const [t] = await db.select({ t: schema.tickets, o: schema.ticketOrders, e: schema.events, z: schema.eventZones, seat: schema.eventSeats.label }).from(schema.tickets)
     .innerJoin(schema.ticketOrders, eq(schema.ticketOrders.id, schema.tickets.orderId))
     .innerJoin(schema.events, eq(schema.events.id, schema.tickets.eventId))
     .innerJoin(schema.eventZones, eq(schema.eventZones.id, schema.tickets.zoneId))
+    .leftJoin(schema.eventSeats, eq(schema.eventSeats.id, schema.tickets.seatId))
     .where(eq(schema.tickets.qrToken, token));
   if (t) {
     const name = `${t.t.firstName} ${t.t.lastName}`.trim();
@@ -426,7 +428,7 @@ export async function checkIn(venueId: string, token: string): Promise<CheckInRe
     const [mark] = await db.update(schema.tickets).set({ checkedInAt: new Date() })
       .where(and(eq(schema.tickets.id, t.t.id), sql`${schema.tickets.checkedInAt} is null`)).returning();
     if (!mark) return { ok: false, reason: 'already_in', name, at: t.t.checkedInAt };
-    return { ok: true, type: 'ticket', name, ticketType: t.z.name, event: t.e.title };
+    return { ok: true, type: 'ticket', name, ticketType: t.z.name, event: t.e.title, seat: t.seat ? placeOf(t.z.kind, '', t.seat) : null };
   }
   return { ok: false, reason: 'unknown' };
 }

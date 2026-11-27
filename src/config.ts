@@ -44,5 +44,5 @@ export const config = {
     keyPassphrase: env.APPLE_PASS_KEY_PASSPHRASE ?? '',
     wwdr: (env.APPLE_WWDR_CERT ?? '').replace(/\\n/g, '\n'),
   },
-  holdMinutes: 15,
+  holdMinutes: 10,
 };

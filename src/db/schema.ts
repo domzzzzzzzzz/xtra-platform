@@ -352,6 +352,8 @@ export const events = pgTable('events', {
   bookingFeeBps: integer('booking_fee_bps'),
   /** Max tickets in one order. */
   maxPerOrder: integer('max_per_order').notNull().default(10),
+  /** Corporate / private events: nothing is sold, guests only get in with an invitation. */
+  inviteOnly: boolean('invite_only').notNull().default(false),
   createdAt: createdAt(),
 }, (t) => [uniqueIndex('events_venue_slug_uq').on(t.venueId, t.slug)]);
 
@@ -382,6 +384,8 @@ export const eventZones = pgTable('event_zones', {
   sort: integer('sort').notNull().default(0),
   /** Staff closed this ticket type by hand: guests see it as sold out. Invites still work. */
   soldOut: boolean('sold_out').notNull().default(false),
+  /** Seated blocks: how the editor builds the rows (rows, seats per row, curve, angle, first row letter...). */
+  meta: jsonb('meta'),
 });
 
 /** Individual seats or tables inside a seated/table zone. */
