@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { db, pool, schema } from '../src/db/index.js';
 import { nightOf } from '../src/lib/dates.js';
@@ -139,8 +139,9 @@ describe('floor map, booking, deposit, door, bill', () => {
     expect(st.body.status).toBe('confirmed');
     expect(st.body.deposit.paid).toBe(true);
     expect(st.body.party.every((p: any) => p.passUrl)).toBe(true);
-    const passes = await db.select().from(schema.messages).where(eq(schema.messages.kind, 'booking_pass'));
-    expect(passes.length).toBe(3); // Mona WA+email, Sara WA. Omar has no contact.
+    const sent = await db.select().from(schema.messages).where(inArray(schema.messages.kind, ['booking_confirmed', 'booking_pass', 'deposit_paid']));
+    // Mona (booker) gets one confirmation with her pass on WA + email, Sara her pass on WA. Omar has no contact.
+    expect(sent.map((m) => `${m.kind}:${m.channel}`).sort()).toEqual(['booking_confirmed:email', 'booking_confirmed:whatsapp', 'booking_pass:whatsapp']);
   });
 
   it('door scan works once per person, and only on the right night', async () => {
@@ -179,7 +180,10 @@ describe('floor map, booking, deposit, door, bill', () => {
     const crm = await api.get(`${v()}/guests/${guest.id}`);
     expect(crm.body.points).toBe(Math.floor(766080 / 10000));
     expect(crm.body.visits).toBe(1);
-    expect(crm.body.tier.name).toBe('Member');
+    expect(crm.body.tier.name).toBe('Member');    // The guest gets their receipt by email only.
+    const rc = await db.select().from(schema.messages).where(eq(schema.messages.kind, `receipt:${tab.body.id}`));
+    expect(rc.map((m) => m.channel)).toEqual(['email']);
+    expect(rc[0].subject).toContain('Your receipt');
   });
 });
 
@@ -370,6 +374,10 @@ describe('live app support', () => {
     const { localDate } = await import('../src/lib/dates.js');
     const [mona] = (await api.get(`${v()}/guests?q=mona`)).body;
     await db.update(schema.guests).set({ birthDate: `1995-${localDate(new Date(Date.now() + 7 * 86400_000)).slice(5)}`, whatsappOptIn: true }).where(eq(schema.guests.id, mona.id));
+    // Offer messages are off until the venue switches them on.
+    await runAutomations();
+    expect((await db.select().from(schema.messages).where(eq(schema.messages.guestId, mona.id))).filter((m) => m.kind.startsWith('auto:'))).toHaveLength(0);
+    await api.patch(`${v()}`, { settings: { automations: { bday: true } } });
     await runAutomations();
     await runAutomations();
     const sent = await db.select().from(schema.messages).where(eq(schema.messages.guestId, mona.id));
