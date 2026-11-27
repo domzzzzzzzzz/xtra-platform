@@ -52,7 +52,9 @@ it('gives 1 point per EGP 100', () => {
 });
 
 it('normalises Egyptian phone numbers', () => {
-  for (const p of ['01012345678', '+201012345678', '00201012345678', '+20 101 234 5678', '1012345678']) expect(normalizePhone(p)).toBe('+201012345678');
+  for (const p of ['01012345678', '+201012345678', '00201012345678', '+20 101 234 5678', '1012345678', '+20 010 1234 5678']) expect(normalizePhone(p)).toBe('+201012345678');
+  expect(normalizePhone('+971 50 123 4567')).toBe('+971501234567');
+  expect(normalizePhone('00966501234567')).toBe('+966501234567');
 });
 
 it('verifies the Paymob HMAC', () => {

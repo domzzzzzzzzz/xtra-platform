@@ -36,6 +36,13 @@
       "when": 1795726973821,
       "tag": "0004_messages_inbox",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1795777676974,
+      "tag": "0005_tickets_invites_soldout",
+      "breakpoints": true
     }
   ]
 }
