@@ -107,7 +107,10 @@ export function renderEmail(d: EmailDoc): string {
       ${d.venue.address ? `<div>${esc(d.venue.address)}${directions}</div>` : directions ? `<div>${directions.slice(3)}</div>` : ''}
       <div><a href="${app}/terms" style="color:#8a90ab">Terms</a> · <a href="${app}/privacy" style="color:#8a90ab">Privacy</a> · <a href="${app}/refunds" style="color:#8a90ab">Refunds</a></div>
       ${d.unsubscribeUrl ? `<div style="padding-top:6px"><a href="${esc(d.unsubscribeUrl)}" style="color:#8a90ab">Unsubscribe from offers</a></div>` : ''}
-      <div style="padding-top:6px">Sent with XTRA</div>
+      <table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:16px auto 0"><tr>
+        <td style="color:#a2a7bd;font-size:11px;padding-right:6px;vertical-align:middle">Powered by</td>
+        <td style="vertical-align:middle"><a href="https://xtratickets.com" style="text-decoration:none"><img src="${app}/web/brand/xtra-gray.png" alt="XTRA" width="50" height="11" style="display:block;border:0;width:50px;height:11px"></a></td>
+      </tr></table>
     </td></tr>
   </table>
 </td></tr></table>

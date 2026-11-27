@@ -211,6 +211,6 @@ export async function unsubscribePage(app: FastifyInstance) {
     return reply.type('text/html').header('Cache-Control', 'no-store').send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Unsubscribe · XTRA</title>
 <style>:root{color-scheme:light dark;--bg:light-dark(#f3f4f8,#0c0e26);--card:light-dark(#fff,#151842);--ink:light-dark(#12153f,#eef1ff);--mute:light-dark(#5b6280,#9aa2cc)}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 system-ui,sans-serif;display:grid;place-items:center;min-height:100vh;padding:20px;box-sizing:border-box}
 main{background:var(--card);max-width:440px;padding:32px 28px;border-radius:16px}h1{margin:0 0 8px;font-size:24px;letter-spacing:-.02em}p{margin:0;color:var(--mute)}</style></head>
-<body><main><h1>${msg[0]}</h1><p>${msg[1]}</p></main></body></html>`);
+<body><div><main><h1>${msg[0]}</h1><p>${msg[1]}</p></main><footer style="display:flex;align-items:center;justify-content:center;gap:6px;font-size:11px;color:#8a8a93;opacity:.85;margin-top:18px">Powered by <img src="/web/brand/xtra-gray.png" alt="XTRA" width="45" height="10" style="height:10px;width:auto"></footer></div></body></html>`);
   });
 }

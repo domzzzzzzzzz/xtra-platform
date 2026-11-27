@@ -767,3 +767,12 @@ video.cam{width:100%;border-radius:16px;background:#05061a;aspect-ratio:1;object
 .invseat{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px;font-size:14px}
 #sheet .smap{aspect-ratio:1.4!important}
 .smap .smfree{cursor:pointer}
+
+/* Powered by XTRA: quiet, always at the very bottom of the page */
+#main,.gscroll{display:flex;flex-direction:column}
+#main>*,.gscroll>*{flex-shrink:0}
+.powered{margin-top:auto;padding:36px 0 6px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:10.5px;letter-spacing:.02em;color:#8a8a93;opacity:.8}
+.powered img{height:10px;width:auto;display:block;transform:translateY(.5px)}
+.gscroll>.powered{padding:28px 0 18px}
+.login>.powered{margin-top:10px;padding:0}
+@media print{.powered{display:none}}

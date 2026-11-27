@@ -71,6 +71,10 @@ const app = () => config.publicAppUrl;
 export const walletImageUrl = {
   logo: (venueId: string) => `${app()}/api/public/wallet/logo/${venueId}.png`,
   hero: (eventId: string) => `${app()}/api/public/wallet/hero/${eventId}.png`,
+  /** Booking passes: the venue photo across the pass. */
+  venueHero: (venueId: string) => `${app()}/api/public/wallet/venue/${venueId}.png`,
+  xtraLogo: () => `${app()}/web/brand/xtra-wallet-logo.png`,
+  powered: () => `${app()}/web/brand/wallet-powered.png`,
 };
 
 /* ------------------------------------------------------------------ Google */
@@ -86,8 +90,30 @@ const googleIds = (p: PassInfo) => {
   return { classId: `${g.issuerId}.xtra_${p.kind}_${clean(p.groupId.replace(/-/g, ''))}`, objectId: `${g.issuerId}.${clean(p.qrToken)}` };
 };
 
+/** ISO time with Cairo's offset (+02:00 or +03:00 in summer), so Google shows the local time. */
+export function cairoIso(d: Date) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: 'Africa/Cairo', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    .formatToParts(d).map((x) => [x.type, x.value]));
+  const wall = Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour, +parts.minute, +parts.second);
+  const off = Math.round((wall - Math.floor(d.getTime() / 1000) * 1000) / 60000);
+  const hh = String(Math.floor(Math.abs(off) / 60)).padStart(2, '0'), mm = String(Math.abs(off) % 60).padStart(2, '0');
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}${off < 0 ? '-' : '+'}${hh}:${mm}`;
+}
+
+/** Card layout: date, time and type on top; where you sit (section/row/seat or area/table/party) under it. */
+const ref = (...ids: string[]) => ({ firstValue: { fields: ids.map((id) => ({ fieldPath: `object.textModulesData['${id}']` })) } });
+const googleTemplate = {
+  cardTemplateOverride: {
+    cardRowTemplateInfos: [
+      { threeItems: { startItem: ref('date'), middleItem: ref('time'), endItem: ref('type') } },
+      { threeItems: { startItem: ref('section', 'area'), middleItem: ref('row', 'table'), endItem: ref('seat', 'guests', 'entry') } },
+    ],
+  },
+};
+
 export function googleClass(p: PassInfo) {
   const { classId } = googleIds(p);
+  const hero = p.hasHero ? (p.kind === 'ticket' ? walletImageUrl.hero(p.groupId) : walletImageUrl.venueHero(p.venueId)) : null;
   return {
     id: classId,
     // The venue's name, not XTRA's: the pass is white label.
@@ -95,10 +121,12 @@ export function googleClass(p: PassInfo) {
     reviewStatus: 'UNDER_REVIEW',
     eventName: lang(p.title),
     venue: { name: lang(p.venueName), address: lang(p.address || p.venueName) },
-    dateTime: { start: p.startsAt.toISOString(), ...(p.endsAt ? { end: p.endsAt.toISOString() } : {}) },
+    dateTime: { start: cairoIso(p.startsAt), ...(p.endsAt ? { end: cairoIso(p.endsAt) } : {}) },
     hexBackgroundColor: brand(p.color),
-    ...(p.hasLogo ? { logo: { sourceUri: { uri: walletImageUrl.logo(p.venueId) }, contentDescription: lang(p.venueName) } } : {}),
-    ...(p.hasHero && p.kind === 'ticket' ? { heroImage: { sourceUri: { uri: walletImageUrl.hero(p.groupId) }, contentDescription: lang(p.title) } } : {}),
+    // Venue logo, or the XTRA mark when the venue has none yet.
+    logo: { sourceUri: { uri: p.hasLogo ? walletImageUrl.logo(p.venueId) : walletImageUrl.xtraLogo() }, contentDescription: lang(p.hasLogo ? p.venueName : 'XTRA') },
+    ...(hero ? { heroImage: { sourceUri: { uri: hero }, contentDescription: lang(p.kind === 'ticket' ? p.title : p.venueName) } } : {}),
+    classTemplateInfo: googleTemplate,
     ...(p.lat != null && p.lng != null ? { locations: [{ latitude: p.lat, longitude: p.lng }] } : {}),
   };
 }
@@ -109,8 +137,8 @@ export function googleObject(p: PassInfo) {
   const seatInfo = p.kind === 'ticket' && (get('section') || get('row') || get('seat'))
     ? { ...(get('section') ? { section: lang(get('section')!) } : {}), ...(get('row') ? { row: lang(get('row')!) } : {}), ...(get('seat') ? { seat: lang(get('seat')!) } : {}) }
     : null;
-  // What seatInfo cannot hold (tables, areas, party size) goes in text rows.
-  const extra = p.place.filter((f) => !seatInfo || !['section', 'row', 'seat'].includes(f.key));
+  const directions = p.lat != null && p.lng != null ? `https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lng}`
+    : p.address ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${p.venueName}, ${p.address}`)}` : null;
   return {
     id: objectId,
     classId,
@@ -120,14 +148,25 @@ export function googleObject(p: PassInfo) {
     ...(p.code ? { ticketNumber: p.code, reservationInfo: { confirmationCode: p.code } } : {}),
     ...(seatInfo ? { seatInfo } : {}),
     hexBackgroundColor: brand(p.color),
-    barcode: { type: 'QR_CODE', value: p.qrToken, alternateText: p.qrToken.slice(0, 8).toUpperCase() },
+    barcode: { type: 'QR_CODE', value: p.qrToken, alternateText: p.code || p.qrToken.slice(0, 8).toUpperCase() },
+    // The card rows read these by id (see googleTemplate); they also list in the pass details.
     textModulesData: [
-      ...extra.map((f) => ({ id: f.key, header: f.label, body: f.value })),
-      { id: 'when', header: 'When', body: whenLong(p.startsAt) },
+      { id: 'date', header: 'Date', body: cairo(p.startsAt, { weekday: 'short', day: 'numeric', month: 'short' }) },
+      { id: 'time', header: 'Time', body: timeOnly(p.startsAt) },
+      { id: 'type', header: p.kind === 'ticket' ? 'Ticket' : 'Pass', body: p.ticketType },
+      ...p.place.map((f) => ({ id: f.key, header: f.label, body: f.value })),
       ...(p.voided ? [{ id: 'status', header: 'Status', body: 'Cancelled. This pass no longer works at the door.' }] : []),
+      ...(p.address ? [{ id: 'address', header: 'Venue', body: `${p.venueName}\n${p.address}` }] : []),
       { id: 'issuer', header: 'Issued by', body: issuerContact() },
     ],
-    linksModuleData: { uris: [{ id: 'pass', uri: p.passUrl, description: 'Open my pass' }] },
+    linksModuleData: {
+      uris: [
+        { id: 'pass', uri: p.passUrl, description: 'Open my pass' },
+        ...(directions ? [{ id: 'directions', uri: directions, description: 'Directions' }] : []),
+        { id: 'terms', uri: `${app()}/terms`, description: 'Terms' },
+      ],
+    },
+    imageModulesData: [{ id: 'powered', mainImage: { sourceUri: { uri: walletImageUrl.powered() }, contentDescription: lang('Powered by XTRA') } }],
   };
 }
 

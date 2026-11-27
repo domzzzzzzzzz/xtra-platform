@@ -104,7 +104,7 @@ body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 Archivo,system
 h1{font-size:clamp(28px,5vw,38px);font-weight:800;letter-spacing:-.02em;line-height:1.1;margin:0 0 6px}h2{font-size:19px;margin:30px 0 8px}
 .upd{color:var(--mute);font-size:14px;margin:0 0 24px}ul{padding-left:20px}li{margin:6px 0}a{color:inherit;font-weight:600}
 nav{font-size:14px;color:var(--mute);border-top:1px solid var(--line);margin-top:40px;padding-top:16px}</style></head>
-<body><main><h1>${p.title}</h1><p class="upd">Last updated ${UPDATED}</p>${p.body(c)}<nav>${links}</nav></main></body></html>`;
+<body><main><h1>${p.title}</h1><p class="upd">Last updated ${UPDATED}</p>${p.body(c)}<nav>${links}</nav><footer style="display:flex;align-items:center;justify-content:center;gap:6px;font-size:11px;color:#8a8a93;opacity:.85;margin-top:40px">Powered by <img src="/web/brand/xtra-gray.png" alt="XTRA" width="45" height="10" style="height:10px;width:auto"></footer></main></body></html>`;
 }
 
 export default async function legal(app: FastifyInstance) {

@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { config } from '../src/config.js';
 import forge from 'node-forge';
-import { appleCreds, issuerContact, applePass, applePkpass, appleWalletReady, googleObject, googleWalletUrl, type PassInfo } from '../src/integrations/wallet.js';
+import { appleCreds, cairoIso, googleClass, issuerContact, applePass, applePkpass, appleWalletReady, googleObject, googleWalletUrl, type PassInfo } from '../src/integrations/wallet.js';
 import { renderEmail } from '../src/integrations/email-html.js';
 import { bookingTimes } from '../src/modules/passes.js';
 import { fakeAppleCerts } from './helpers.js';
@@ -34,6 +34,27 @@ describe('Wallet passes', () => {
     expect(booking.seatInfo).toBeUndefined();
     expect(booking.textModulesData).toEqual(expect.arrayContaining([{ id: 'table', header: 'Table', body: 'T4' }]));
     Object.assign(config.googleWallet, { issuerId: '', serviceAccountEmail: '', privateKey: '' });
+  });
+
+  it('Google Wallet looks finished: Cairo times, card rows, XTRA logo fallback and "Powered by XTRA"', () => {
+    expect(cairoIso(new Date('2026-12-05T20:00:00Z'))).toBe('2026-12-05T22:00:00+02:00');
+    expect(cairoIso(new Date('2026-07-05T20:00:00Z'))).toBe('2026-07-05T23:00:00+03:00');
+    const cls = googleClass(info);
+    expect(cls.dateTime.start).toBe('2026-12-05T22:00:00+02:00');
+    expect(cls.logo.sourceUri.uri).toMatch(/\/web\/brand\/xtra-wallet-logo\.png$/);
+    expect(googleClass({ ...info, hasLogo: true }).logo.sourceUri.uri).toContain('/api/public/wallet/logo/');
+    expect(googleClass({ ...info, kind: 'booking', hasHero: true }).heroImage?.sourceUri.uri).toContain('/api/public/wallet/venue/');
+    const rows = cls.classTemplateInfo.cardTemplateOverride.cardRowTemplateInfos;
+    expect(rows[1].threeItems.startItem.firstValue.fields.map((f) => f.fieldPath)).toEqual(["object.textModulesData['section']", "object.textModulesData['area']"]);
+    const obj = googleObject(info);
+    const ids = obj.textModulesData.map((m) => m.id);
+    // Every id the card reads exists on the object or is simply left out.
+    for (const r of rows) for (const it of Object.values(r.threeItems)) for (const f of it.firstValue.fields) {
+      const id = f.fieldPath.match(/'(\w+)'/)![1];
+      if (['date', 'time', 'type', 'section', 'row', 'seat'].includes(id)) expect(ids).toContain(id);
+    }
+    expect(obj.imageModulesData[0].mainImage.sourceUri.uri).toMatch(/\/web\/brand\/wallet-powered\.png$/);
+    expect(obj.linksModuleData.uris.map((u) => u.description)).toEqual(['Open my pass', 'Directions', 'Terms']);
   });
 
   it('Apple Wallet: off until certificates exist, then a signed .pkpass', async () => {
@@ -84,5 +105,7 @@ describe('Wallet passes', () => {
     expect(html).toContain('Add to Apple Wallet');
     expect(html).toContain('href="https://g/save"');
     expect(renderEmail({ venue: { name: 'Lumen' }, preheader: 'x', title: 'Your pass', qrs: [{ token: 'TOKEN_abc123xyz', caption: 'Nour' }] })).not.toContain('Wallet');
+    // Every email ends with "Powered by" and the XTRA logo (an image, not text).
+    expect(html).toMatch(/Powered by<\/td>[\s\S]*\/web\/brand\/xtra-gray\.png" alt="XTRA"/);
   });
 });
