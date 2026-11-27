@@ -28,7 +28,7 @@ One page, no build step, served by the same server:
 | `/` | Staff | Floor, bookings, door scanner, orders and bills, events, marketing, guests, community, booking page, floor map, venue setup |
 | `/book/:slug` | Guests | Booking page of a venue |
 | `/b/:code` | Guests | Booking status, deposit payment, QR pass |
-| `/e/:eventId` | Guests | Ticket page: seat map, 15-minute hold, promo code, Paymob checkout |
+| `/e/:eventId` | Guests | Ticket page: seat map (theatre rows, standing, tables or a mix), 10-minute hold from the first pick, promo code, Paymob checkout |
 | `/o/:code` | Guests | Ticket order: payment status and every ticket |
 | `/t/:token`, `/p/:token` | Guests | One ticket or booking pass with its QR |
 | `/me` | Guests | Account, signed in with a WhatsApp code |
@@ -57,7 +57,8 @@ built-in test checkout at `/dev/pay/:id`, and messages are saved to the
 - Guests are one profile per phone number across the platform. What a venue knows about them (tags, visits, spend, points) is per venue.
 - **Table bill**: items, plus a top-up to the area's minimum spend, plus service (12% default) on that, plus VAT (14%) on base + service, minus the paid deposit.
 - **Tickets**: promo % comes off the ticket price, the booking fee (platform default 5%, editable by XTRA admins, can be overridden per venue or event) is on the discounted price, and 14% VAT is on the fee only. A 100% code makes the order free.
-- **Holds**: picking seats holds them for 15 minutes. Expired holds free the seats and the promo use.
+- **Holds**: the first seat a guest taps holds it for 10 minutes; adding or dropping seats keeps the same clock. Other guests see held seats as "on hold". Expired holds free the seats and the promo use (a sweeper runs every 20 seconds).
+- **Passes**: every ticket QR is tied to its seat, table or standing zone. Opening the pass shows the map with a walking route from the entrance.
 - **Marketing** only reaches guests who opted in on that channel (Law 151/2020).
 
 ## API map

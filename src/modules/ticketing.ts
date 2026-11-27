@@ -9,7 +9,7 @@ import { config } from '../config.js';
 import { startPayment } from './payments.js';
 import { imageRef } from './media.js';
 import {
-  availability, applyPromo, checkoutInput, expireHolds, feeRatesFor, hold, holdInput, onTicketsPaid, orderByCode, prepareCheckout, sendTickets,
+  availability, applyPromo, changeHold, changeHoldInput, checkoutInput, expireHolds, feeRatesFor, hold, holdInput, onTicketsPaid, orderByCode, placeOf, prepareCheckout, sendTickets,
 } from './ticketing-service.js';
 import { upsertGuest, ensureVenueGuest } from './guests-service.js';
 
@@ -43,6 +43,7 @@ const zoneBody = z.object({
   color: z.string().nullish(),
   sort: z.number().int().default(0),
   soldOut: z.boolean().optional(),
+  meta: z.record(z.unknown()).nullish(),
   seats: z.array(z.object({
     id: z.string().uuid().optional(), label: z.string().min(1).max(20), x: z.number().default(0), y: z.number().default(0),
     seats: z.number().int().min(1).max(50).default(1), shape: z.string().max(20).nullish(), rotation: z.number().default(0), enabled: z.boolean().default(true),
@@ -143,10 +144,15 @@ export default async function ticketing(app: FastifyInstance) {
           [{ id: zoneId }] = await tx.insert(schema.eventZones).values({ ...values, eventId: e.id }).returning({ id: schema.eventZones.id });
         }
         const exSeats = await tx.select().from(schema.eventSeats).where(eq(schema.eventSeats.zoneId, zoneId!));
+        // A seat sent without its id but with a label the zone already has is that same seat
+        // (the editor rebuilt the rows before it knew the ids). Keeps sold seats safe.
+        const byLabel = new Map(exSeats.map((s) => [s.label, s.id]));
+        const claimed = new Set(seats.filter((s) => s.id).map((s) => s.id!));
+        for (const s of seats) if (!s.id && byLabel.has(s.label) && !claimed.has(byLabel.get(s.label)!)) { s.id = byLabel.get(s.label); claimed.add(s.id!); }
         const keepSeats = new Set(seats.filter((s) => s.id).map((s) => s.id!));
         for (const s of exSeats) {
           if (keepSeats.has(s.id)) continue;
-          if (soldSeats.has(s.id)) throw conflict(`Seat ${s.label} is sold and cannot be removed`, 'seat_has_sales');
+          if (soldSeats.has(s.id)) throw conflict(`${placeOf(zb.kind, zb.name, s.label)} is sold and cannot be removed`, 'seat_has_sales');
           await tx.delete(schema.eventSeats).where(eq(schema.eventSeats.id, s.id));
         }
         for (const s of seats) {
@@ -431,7 +437,7 @@ export default async function ticketing(app: FastifyInstance) {
       fees: rates,
       holdMinutes: config.holdMinutes,
       zones: map.zones.map(({ capacity: _c, realLeft: _r, soldOut: _s, markedSoldOut, ...z }) => ({ ...z, soldOut: z.left === 0, closed: markedSoldOut })),
-      seats: map.seats.map((s) => ({ id: s.id, zoneId: s.zoneId, label: s.label, x: s.x, y: s.y, seats: s.seats, shape: s.shape, rotation: s.rotation, taken: s.taken })),
+      seats: map.seats.map((s) => ({ id: s.id, zoneId: s.zoneId, label: s.label, x: s.x, y: s.y, seats: s.seats, shape: s.shape, rotation: s.rotation, taken: s.taken, held: s.held })),
     };
   });
 
@@ -446,7 +452,10 @@ export default async function ticketing(app: FastifyInstance) {
 
   app.get<{ Params: { code: string } }>('/public/orders/:code', async (req) => publicOrder(await orderByCode(req.params.code)));
 
-  /* Let go of held seats (the guest went back to change their picks). */
+  /* Add or drop seats on a hold that is already running (the clock keeps going). */
+  app.put<{ Params: { code: string } }>('/public/orders/:code/items', async (req) => publicOrder(await changeHold(req.params.code, parse(changeHoldInput, req.body))));
+
+  /* Let go of held seats (the guest left or went back to change their picks). */
   app.post<{ Params: { code: string } }>('/public/orders/:code/release', async (req) => {
     const o = await orderByCode(req.params.code);
     const [done] = await db.update(schema.ticketOrders).set({ status: 'expired' })
@@ -478,19 +487,19 @@ export default async function ticketing(app: FastifyInstance) {
 }
 
 async function publicOrder(o: typeof schema.ticketOrders.$inferSelect) {
-  const rows = await db.select({ zone: schema.eventZones.name, kind: schema.eventZones.kind, seat: schema.eventSeats.label, seats: schema.eventSeats.seats, qty: schema.ticketOrderLines.qty, unitPrice: schema.ticketOrderLines.unitPrice })
+  const rows = await db.select({ zoneId: schema.ticketOrderLines.zoneId, seatId: schema.ticketOrderLines.seatId, zone: schema.eventZones.name, kind: schema.eventZones.kind, seat: schema.eventSeats.label, seats: schema.eventSeats.seats, qty: schema.ticketOrderLines.qty, unitPrice: schema.ticketOrderLines.unitPrice })
     .from(schema.ticketOrderLines).innerJoin(schema.eventZones, eq(schema.eventZones.id, schema.ticketOrderLines.zoneId))
     .leftJoin(schema.eventSeats, eq(schema.eventSeats.id, schema.ticketOrderLines.seatId)).where(eq(schema.ticketOrderLines.orderId, o.id))
     .orderBy(asc(schema.eventZones.sort), asc(schema.eventSeats.label));
   /** `tickets` is how many people the line admits: a table admits one per seat. */
-  const lines = rows.map(({ seats, ...l }) => ({ ...l, tickets: l.kind === 'table' && l.seat ? Math.max(1, seats ?? 1) : l.qty }));
+  const lines = rows.map(({ seats, ...l }) => ({ ...l, place: l.kind === 'table' ? placeOf('table', '', l.seat) : placeOf(l.kind, l.zone, l.seat), tickets: l.kind === 'table' && l.seat ? Math.max(1, seats ?? 1) : l.qty }));
   let promo: string | null = null;
   if (o.promoCodeId) [{ code: promo }] = await db.select({ code: schema.promoCodes.code }).from(schema.promoCodes).where(eq(schema.promoCodes.id, o.promoCodeId));
   const tickets = o.status === 'paid'
-    ? (await db.select({ firstName: schema.tickets.firstName, lastName: schema.tickets.lastName, qrToken: schema.tickets.qrToken, zone: schema.eventZones.name, seat: schema.eventSeats.label })
+    ? (await db.select({ firstName: schema.tickets.firstName, lastName: schema.tickets.lastName, qrToken: schema.tickets.qrToken, zone: schema.eventZones.name, kind: schema.eventZones.kind, seat: schema.eventSeats.label })
       .from(schema.tickets).innerJoin(schema.eventZones, eq(schema.eventZones.id, schema.tickets.zoneId)).leftJoin(schema.eventSeats, eq(schema.eventSeats.id, schema.tickets.seatId))
       .where(eq(schema.tickets.orderId, o.id)).orderBy(asc(schema.eventZones.sort), asc(schema.eventSeats.label), asc(schema.tickets.lastName)))
-      .map((t) => ({ name: `${t.firstName} ${t.lastName}`.trim(), label: t.seat ? `Table ${t.seat}` : t.zone, url: `${config.publicAppUrl}/t/${t.qrToken}` }))
+      .map((t) => ({ name: `${t.firstName} ${t.lastName}`.trim(), label: t.kind === 'table' ? placeOf('table', '', t.seat) : placeOf(t.kind, t.zone, t.seat), url: `${config.publicAppUrl}/t/${t.qrToken}` }))
     : [];
   return {
     code: o.code, status: o.status, eventId: o.eventId, holdExpiresAt: o.holdExpiresAt,

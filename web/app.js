@@ -171,11 +171,16 @@ function eventFrom(e){
   (e.zones||[]).forEach(z=>{
     if(z.kind==='standing'){types.push({zid:z.id,name:z.name,price:P2E(z.price),qty:z.capacity,sold:e.soldByZone?.[z.id]||0,left:z.left,closed:!!z.markedSoldOut});layout.push({id:z.id,kind:'standing',type:types.length-1,name:z.name,x:z.x,y:z.y,w:z.w,h:z.h,rot:0})}
     else if(z.kind==='table'){const i=tz.length;tz.push({id:z.id,name:z.name,price:P2E(z.price),color:z.color||ZCOLS[i%ZCOLS.length],ink:'#fff',closed:!!(z.markedSoldOut||z.closed)});layout.push({id:'zs-'+z.id,kind:'zone',area:z.id,x:z.x,y:z.y,w:z.w,h:z.h,rot:0})}
+    else if(z.kind==='seated'){const m=z.meta||{};layout.push({...SM.BDEF,...m,id:z.id,kind:'block',name:z.name,price:P2E(z.price),color:z.color||null,closed:!!(z.markedSoldOut||z.closed),left:z.left,x:m.x??(z.x+z.w/2),y:m.y??(z.y+z.h/2),seatIds:{}})}
     else if(z.kind==='decor')layout.push({id:z.id,kind:z.shape||'stage',name:z.name,x:z.x,y:z.y,w:z.w,h:z.h,rot:0});
   });
-  (e.seats||[]).forEach(s=>{if(tz.some(z=>z.id===s.zoneId))layout.push({id:s.id,kind:SHAPES.includes(s.shape)?s.shape:'round',name:s.label,x:s.x,y:s.y,seats:s.seats||1,rot:s.rotation||0,zone:s.zoneId})});
+  // Seat states: mine wins later; here only what others hold or bought.
+  const paidS=new Set(e.soldSeats||[]),seatSt={};
+  (e.seats||[]).forEach(s=>{seatSt[s.id]=s.held&&!paidS.has(s.id)?'held':(s.taken&&s.enabled!==false)||paidS.has(s.id)?'sold':'free'});
+  (e.seats||[]).forEach(s=>{const b=layout.find(x=>x.kind==='block'&&x.id===s.zoneId);if(b){if(s.enabled!==false)b.seatIds[s.label]=s.id;return}
+    if(tz.some(z=>z.id===s.zoneId))layout.push({id:s.id,kind:SHAPES.includes(s.shape)?s.shape:'round',name:s.label,x:s.x,y:s.y,seats:s.seats||1,rot:s.rotation||0,zone:s.zoneId})});
   const ev={id:e.id,name:e.title,night:(st==='live'?'Tonight · ':'')+night,doors:t12(doorsMin),lineup:e.lineup||'',color:e.color||ZCOLS[0],poster:e.posterUrl||null,status:st,seatMap:e.seatMap,types,tz,layout,
-    soldT:e.soldSeats||(e.seats||[]).filter(s=>s.taken).map(s=>s.id),startsAt:e.startsAt,orders:e.orders||0,revenue:P2E(e.revenue),checkedIn:e.checkedIn||0,invited:e.invited||0,promos:[],batches:[],views:0,raw:e};
+    soldT:e.soldSeats||(e.seats||[]).filter(s=>s.taken).map(s=>s.id),seatSt,startsAt:e.startsAt,orders:e.orders||0,revenue:P2E(e.revenue),checkedIn:e.checkedIn||0,invited:e.invited||0,promos:[],batches:[],views:0,raw:e};
   Object.defineProperty(ev,'tables',{configurable:true,enumerable:false,get(){return ev.layout.filter(isT).map(t=>({id:t.id,name:t.name,zone:evArea(ev,t),seats:t.seats,sold:ev.soldT.includes(t.id)}))}});
   return ev}
 function eventToZones(e){
@@ -184,6 +189,10 @@ function eventToZones(e){
   e.tz.forEach((z,i)=>{const sh=e.layout.find(x=>x.kind==='zone'&&x.area===z.id)||{x:0,y:0,w:100,h:80};const real=/^[0-9a-f]{8}-[0-9a-f]{4}-/.test(z.id);
     zones.push({...(real?{id:z.id}:{}),name:z.name,kind:'table',price:E2P(z.price),color:z.color,x:sh.x,y:sh.y,w:Math.max(1,sh.w),h:Math.max(1,sh.h),sort:100+i,
       seats:e.layout.filter(isT).filter(t=>evArea(e,t)===z.id).map(t=>({...(/^e\d+$/.test(t.id)?{}:{id:t.id}),label:t.name,x:t.x,y:t.y,seats:t.seats,shape:t.kind,rotation:t.rot||0}))})});
+  e.layout.filter(x=>x.kind==='block').forEach((b,i)=>{const bb=SM.blockBox(b);
+    zones.push({...(/^[0-9a-f]{8}-[0-9a-f]{4}-/.test(b.id)?{id:b.id}:{}),name:b.name||'Section',kind:'seated',price:E2P(b.price),color:b.color||null,x:bb.x,y:bb.y,w:Math.max(1,bb.w),h:Math.max(1,bb.h),sort:50+i,
+      meta:{x:b.x,y:b.y,rot:b.rot||0,rows:b.rows,cols:b.cols,curve:b.curve||0,taper:b.taper||0,aisle:b.aisle||0,rowStart:b.rowStart||'A',numDir:b.numDir||'ltr'},
+      seats:SM.blockSeats(b).map(p=>({...(b.seatIds?.[p.label]?{id:b.seatIds[p.label]}:{}),label:p.label,x:p.x,y:p.y}))})});
   e.layout.filter(x=>['stage','bar','dj','entrance'].includes(x.kind)).forEach((f,i)=>zones.push({...(/^e\d+$/.test(f.id)?{}:{id:f.id}),name:f.name||KLABEL[f.kind],kind:'decor',shape:f.kind,x:f.x,y:f.y,w:Math.max(1,f.w),h:Math.max(1,f.h),sort:200+i}));
   return zones}
 
@@ -301,6 +310,7 @@ function drawLayout({portrait=false,edit=false}={}){
   const PR=r=>portrait?{x:H0-(r.y+r.h),y:r.x,w:r.h,h:r.w}:r;
   const L=V().layout;let o='';
   if(edit)o+=`<defs><pattern id="gd" width="20" height="20" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1.2" fill="var(--grid)"/></pattern></defs><rect width="${W0}" height="${H0+20}" fill="url(#gd)"/>`;
+  if(edit&&V().ev){const ev=V().ev;o+=SM.draw(ev,{mode:'edit',zoneOf:t=>evArea(ev,t)}).svg;return o+selBox()}
   L.filter(e=>e.kind==='zone').forEach(z=>{const r=PR(z),A=AR(z.area);o+=`<g class="el" data-id="${z.id}"><rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="18" fill="var(--bg)" opacity="${edit?.85:.7}" ${edit?'stroke="var(--line)" stroke-width="1.5"':''}/>${portrait&&r.w<200?'':`<text x="${r.x+14}" y="${r.y+24}" font-size="${portrait?22:16}" font-weight="700" fill="var(--mute)">${esc(A.name)}${portrait||A.min==null?'':' · min '+A.min.toLocaleString('en-US')}${A.price!=null&&!portrait?' · '+egp(A.price)+' a seat':''}</text>`}</g>`});
   L.filter(e=>!isT(e)&&e.kind!=='zone').forEach(f=>{const r=PR(f);
     if(f.kind==='standing'){const t=V().ev?.types[f.type];o+=`<g class="el" data-id="${f.id}"><rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="14" fill="${ZCOL[f.type%3]}" stroke="var(--chairline)" stroke-width="1.5"/><text x="${r.x+r.w/2}" y="${r.y+r.h/2-2}" text-anchor="middle" font-size="18" font-weight="800" fill="#12153f">${esc(t?t.name:'Standing')}</text><text x="${r.x+r.w/2}" y="${r.y+r.h/2+20}" text-anchor="middle" font-size="13" font-weight="600" fill="#5b6280">Standing${t?' · '+egp(t.price):''}</text></g>`;return}
@@ -311,9 +321,10 @@ function drawLayout({portrait=false,edit=false}={}){
     const tc=EZ?EZ.ink:st==='free'?'var(--ink)':st==='bill'?'var(--blueink)':'var(--chipink)';
     const nm=edit?t.seats+' seats':b?first(b):t.seats+' seats';
     o+=`<g class="${edit?'el':'tb'}" data-id="${t.id}" ${edit?'':`tabindex="0" role="button" aria-label="Table ${esc(t.name)}, ${STL[st]}" data-a="table" data-v="${t.id}"`}><g transform="translate(${cx} ${cy}) rotate(${rot})">${f.svg}</g><text x="${cx}" y="${cy-1}" text-anchor="middle" font-size="${portrait?21:17}" font-weight="800" fill="${tc}" style="font-stretch:112%">${esc(t.name)}</text><text x="${cx}" y="${cy+(portrait?17:14)}" text-anchor="middle" font-size="${portrait?14:11.5}" font-weight="600" fill="${tc}" opacity=".85">${esc(nm)}</text>${st==='bill'?`<circle cx="${cx+22}" cy="${cy-20}" r="7" fill="var(--yellow)" stroke="var(--bg)" stroke-width="2"/>`:''}</g>`});
-  if(edit&&S.sel){const e=EL(S.sel);if(e){const r=ebox(e);o+=`<rect class="selbox" x="${r.x-4}" y="${r.y-4}" width="${r.w+8}" height="${r.h+8}" rx="10" pointer-events="none"/>`;if(!isT(e))o+=`<circle class="handle" data-h="${e.id}" cx="${e.x+e.w}" cy="${e.y+e.h}" r="9"/>`}}
+  if(edit)o+=selBox();
   return o;
 }
+function selBox(){const e=S.sel&&EL(S.sel);if(!e)return '';const r=SM.elBox(e);return `<rect class="selbox" x="${r.x-4}" y="${r.y-4}" width="${r.w+8}" height="${r.h+8}" rx="10" pointer-events="none"/>`+(!isT(e)&&e.kind!=='block'?`<circle class="handle" data-h="${e.id}" cx="${e.x+e.w}" cy="${e.y+e.h}" r="9"/>`:'')}
 function mapSVG(portrait){return `<svg viewBox="${portrait?'0 0 620 1000':'20 10 970 620'}" role="img" aria-label="Seat map">${drawLayout({portrait})}</svg>`}
 
 /* ---------- floor ---------- */
@@ -339,6 +350,13 @@ function vEditor(){
   let insp='<p class="hint">Tap anything on the map to edit it. Drag to move. Arrow keys nudge the selected item.</p>';
   if(e){
     if(isT(e))insp=`<h3>${KLABEL[e.kind]}</h3><div class="stack"><label class="f">Table name<input id="ename" value="${esc(e.name)}" maxlength="6" autocomplete="off"></label><div class="f" style="font-size:14px;font-weight:600">Seats<div class="stepper" style="margin-top:6px"><button data-a="eseat" data-v="-1" aria-label="Fewer seats">−</button><b class="num">${e.seats}</b><button data-a="eseat" data-v="1" aria-label="More seats">+</button></div></div><div class="mute" style="font-size:14px">Area: <b style="color:var(--ink)">${esc(AR(areaOf(e)).name)}</b> (from where it sits)</div><div class="two"><button class="btn ghost sm" data-a="erot">Rotate</button><button class="btn ghost sm" data-a="edup">Duplicate</button></div><button class="btn warn sm" data-a="edel">Delete</button></div>`;
+    else if(e.kind==='block'){const n=SM.blockSeats(e).length,sold=Object.values(e.seatIds||{}).filter(id=>V().ev.soldT.includes(id)).length,st=(k,l,step,val)=>`<div class="f" style="font-size:14px;font-weight:600">${l}<div class="stepper" style="margin-top:6px"><button data-a="bk" data-v="${k}:-${step}" aria-label="Less">−</button><b class="num">${val}</b><button data-a="bk" data-v="${k}:${step}" aria-label="More">+</button></div></div>`;
+      insp=`<h3>Seated section</h3><div class="stack"><label class="f">Section name<input id="ename" value="${esc(e.name)}" maxlength="30" autocomplete="off"></label><label class="f">Price per seat<input type="number" step="50" min="0" data-bk="price" value="${e.price}" inputmode="numeric"></label>
+      <div class="two">${st('rows','Rows',1,e.rows)}${st('cols','Seats per row',1,e.cols)}</div>
+      <div class="two">${st('curve','Curve',1,Math.round((e.curve||0)*10))}${st('taper','Wider rows',1,(e.taper>0?'+':'')+(e.taper||0))}</div>
+      <div class="two">${st('aisle','Aisles',1,e.aisle?'every '+e.aisle:'none')}${st('rot','Turn',5,(e.rot||0)+'°')}</div>
+      <div class="two"><label class="f">First row<input data-bk="rowStart" value="${esc(e.rowStart||'A')}" maxlength="1" autocomplete="off" style="text-transform:uppercase"></label><label class="f">Seat 1 is on the<select data-bk="numDir"><option value="ltr" ${e.numDir!=='rtl'?'selected':''}>Left</option><option value="rtl" ${e.numDir==='rtl'?'selected':''}>Right</option></select></label></div>
+      <p class="hint" style="margin:0">${e.rows} rows · ${n} seats${sold?` · ${sold} sold`:''}. Drag to move. Every seat gets its own QR ticket.</p><div class="two"><button class="btn ghost sm" data-a="edup">Duplicate</button><button class="btn warn sm" data-a="edel">Delete</button></div></div>`}
     else if(e.kind==='standing'){const t=V().ev.types[e.type]||{};insp=`<h3>Standing zone</h3><div class="stack"><label class="f">Ticket name<input data-tt="${e.type}:name" value="${esc(t.name)}" autocomplete="off"></label><div class="two"><label class="f">Price<input type="number" step="50" min="0" data-tt="${e.type}:price" value="${t.price}" inputmode="numeric"></label><label class="f">Tickets<input type="number" min="${t.sold||0}" data-tt="${e.type}:qty" value="${t.qty}" inputmode="numeric"></label></div><p class="hint" style="margin:0">Guests tap this zone to add that ticket. Drag the corner dot to resize.</p><button class="btn warn sm" data-a="edel">Delete</button></div>`}
     else if(e.kind==='zone'&&V().ev)insp=`<h3>Table zone</h3><div class="stack"><label class="f">Zone name<input id="eaname" value="${esc(AR(e.area).name)}" autocomplete="off"></label><label class="f">Price per seat<input type="number" step="100" value="${AR(e.area).price}" data-tzp="${V().ev.id}:${e.area}" inputmode="numeric"></label><p class="hint" style="margin:0">Tables inside sell at this price for every seat. Drag the corner dot to resize.</p><button class="btn warn sm" data-a="edel">Delete zone</button></div>`;
     else if(e.kind==='zone')insp=`<h3>Area</h3><div class="stack"><label class="f">Area name<input id="eaname" value="${esc(AR(e.area).name)}" autocomplete="off"></label><div class="two"><label class="f">Min spend<input type="number" inputmode="numeric" step="500" min="0" data-area="${e.area}" data-k="min" value="${AR(e.area).min}"></label><label class="f">Deposit<input type="number" inputmode="numeric" step="500" min="0" data-area="${e.area}" data-k="dep" value="${AR(e.area).dep}"></label></div><p class="hint" style="margin:0">Drag the corner dot to resize. Tables inside take this area's minimum spend and deposit.</p><button class="btn warn sm" data-a="edel">Delete area</button></div>`;
@@ -346,8 +364,8 @@ function vEditor(){
   }
   const EV=V().ev;
   return (EV?`<button class="back" data-a="evdone">← ${esc(EV.name)}</button>`+head('Seat map',`${esc(EV.name)} · ${esc(EV.night.replace('Tonight · ',''))} · only this event uses this map`,`<button class="btn" data-a="evdone">Done</button>`):head('Floor map',`${esc(VENUES[S.vi].name)} · draw the room once, every screen uses it`,`<button class="btn" data-a="go" data-v="floor">Done</button>`))+
-  `<div class="ed"><div class="pal"><h3>Tables</h3>${PAL.map(([k,n])=>`<button data-a="eadd" data-v="${k}:${n}">${palIcon(k,n)}<span>${KLABEL[k]}<br><span class="mute" style="font-weight:400">${n} seats</span></span></button>`).join('')}<h3>Room</h3>${[...(EV?['standing']:[]),'bar','dj','stage','entrance','zone'].map(k=>`<button data-a="eadd" data-v="${k}:0"><svg viewBox="0 0 34 26"><rect x="3" y="${k==='entrance'?11:5}" width="28" height="${k==='entrance'?4:16}" rx="4" fill="${k==='standing'?'#bfeaff':k==='zone'?'var(--bg)':k==='entrance'?'var(--teal)':'var(--ink)'}" stroke="var(--line)"/></svg><span>${k==='standing'?'Standing zone':k==='zone'?(EV?'Table zone':'Area'):KLABEL[k]}</span></button>`).join('')}</div>
-  <div><div class="canvaswrap"><svg class="canvas" id="canvas" viewBox="0 0 1000 640" tabindex="0" aria-label="Floor map editor"></svg></div><p class="hint">${TABLES().length} tables · ${TABLES().reduce((s,t)=>s+t.seats,0)} seats${EV?' · '+V().layout.filter(x=>x.kind==='standing').length+' standing zones':''} · <span id="savest">saved automatically</span></p></div>
+  `<div class="ed"><div class="pal">${EV?`<h3>Start from a layout</h3><div class="tpls">${TPLS.map(([k,l,d])=>`<button data-a="tpl" data-v="${k}" title="${esc(d)}">${tplIcon(k)}<span>${l}</span></button>`).join('')}</div><h3>Seats</h3><button data-a="eadd" data-v="block:0">${tplIcon('block')}<span>Seated section<br><span class="mute" style="font-weight:400">rows of seats</span></span></button>`:''}<h3>Tables</h3>${PAL.map(([k,n])=>`<button data-a="eadd" data-v="${k}:${n}">${palIcon(k,n)}<span>${KLABEL[k]}<br><span class="mute" style="font-weight:400">${n} seats</span></span></button>`).join('')}<h3>Room</h3>${[...(EV?['standing']:[]),'bar','dj','stage','entrance','zone'].map(k=>`<button data-a="eadd" data-v="${k}:0"><svg viewBox="0 0 34 26"><rect x="3" y="${k==='entrance'?11:5}" width="28" height="${k==='entrance'?4:16}" rx="4" fill="${k==='standing'?'#bfeaff':k==='zone'?'var(--bg)':k==='entrance'?'var(--teal)':'var(--ink)'}" stroke="var(--line)"/></svg><span>${k==='standing'?'Standing zone':k==='zone'?(EV?'Table zone':'Area'):KLABEL[k]}</span></button>`).join('')}</div>
+  <div><div class="canvaswrap"><svg class="canvas" id="canvas" viewBox="0 0 1000 640" tabindex="0" aria-label="Floor map editor"></svg></div><p class="hint">${EV?`${V().layout.filter(x=>x.kind==='block').reduce((s,b)=>s+SM.blockSeats(b).length,0)} seats in rows · `:''}${TABLES().length} tables · ${TABLES().reduce((s,t)=>s+t.seats,0)} table seats${EV?' · '+V().layout.filter(x=>x.kind==='standing').length+' standing zones':''} · <span id="savest">saved automatically</span></p></div>
   <div class="insp bigbox">${insp}</div></div>`;
 }
 function nextName(area){const pre=(V().ev?AR(area).id:AR(area).name[0]||'T').toUpperCase();let n=1;const used=new Set(TABLES().map(t=>t.name));while(used.has(pre+n))n++;return pre+n}
@@ -359,7 +377,7 @@ document.addEventListener('pointerdown',e=>{const svg=e.target.closest('#canvas'
   if(h){drag={id:h.dataset.h,mode:'size',sx:p.x,sy:p.y};const el=EL(drag.id);drag.w=el.w;drag.h=el.h}
   else if(g){S.sel=g.dataset.id;const el=EL(S.sel);drag={id:S.sel,mode:'move',dx:p.x-el.x,dy:p.y-el.y,moved:false};render()}
   else{S.sel=null;render();return}
-  svg.setPointerCapture?.(e.pointerId);e.preventDefault()});
+  try{svg.setPointerCapture?.(e.pointerId)}catch(_){}e.preventDefault()});
 document.addEventListener('pointermove',e=>{if(!drag)return;const svg=$('#canvas');if(!svg)return;const p=svgPt(svg,e),el=EL(drag.id);
   if(drag.mode==='move'){el.x=Math.max(0,Math.min(1000,snap(p.x-drag.dx)));el.y=Math.max(0,Math.min(630,snap(p.y-drag.dy)));drag.moved=true}
   else{el.w=Math.max(el.kind==='entrance'?40:60,snap(drag.w+p.x-drag.sx));if(el.kind!=='entrance')el.h=Math.max(50,snap(drag.h+p.y-drag.sy))}
@@ -644,7 +662,7 @@ function closeSheet(){closeCam();if(!S)return;S.sheet=null;$('#sheet').classList
 const WHY={unknown:'This is not an XTRA pass.',already_in:'Already checked in.',not_confirmed:'Not confirmed yet. The deposit or ticket is not paid.',wrong_night:'This pass is for another night.',wrong_venue:'This pass is for another venue.'};
 const checkinWhy=r=>`${r.name?r.name+': ':''}${WHY[r.reason]||'Cannot check in.'}`;
 function scanResult(r){if(!r.ok)return `<div class="result-bad"><b>Do not let in</b><h2>${esc(r.name||'Unknown pass')}</h2><div>${esc(WHY[r.reason]||'')}</div></div><div class="stack"><button class="btn teal" data-a="scan">Scan next</button><button class="btn ghost" data-a="close">Done</button></div>`;
-  return `<div class="welcome">${BIGX('bx')}<span style="font-weight:700">${r.type==='ticket'?'Valid ticket':'Valid pass'}</span><h2 style="margin:6px 0 10px">${esc(r.name)}</h2><div style="font-size:18px;font-weight:600">${r.type==='ticket'?esc(r.ticketType)+'<br>'+esc(r.event):`${r.arrivedCount} of ${r.party} in · Table ${esc(r.table||'—')}${r.minSpend?'<br>Min spend '+egp(P2E(r.minSpend)):''}`}</div></div>${r.note?`<div class="card" style="padding:10px 14px">${esc(r.note)}</div>`:''}<div class="stack"><button class="btn teal" data-a="scan">Scan next</button><button class="btn ghost" data-a="close">Done</button></div>`}
+  return `<div class="welcome">${BIGX('bx')}<span style="font-weight:700">${r.type==='ticket'?'Valid ticket':'Valid pass'}</span><h2 style="margin:6px 0 10px">${esc(r.name)}</h2><div style="font-size:18px;font-weight:600">${r.type==='ticket'?esc(r.ticketType)+(r.seat?`<br><b style="font-size:22px">${esc(r.seat)}</b>`:'')+'<br>'+esc(r.event):`${r.arrivedCount} of ${r.party} in · Table ${esc(r.table||'—')}${r.minSpend?'<br>Min spend '+egp(P2E(r.minSpend)):''}`}</div></div>${r.note?`<div class="card" style="padding:10px 14px">${esc(r.note)}</div>`:''}<div class="stack"><button class="btn teal" data-a="scan">Scan next</button><button class="btn ghost" data-a="close">Done</button></div>`}
 let CAM=null;
 function closeCam(){if(CAM){CAM.stop=true;CAM.stream?.getTracks().forEach(t=>t.stop());CAM=null}}
 async function doScan(token){closeCam();try{const r=await POST(vurl('/checkin'),{token});if(S.sheet?.k==='scan'){S.sheet.res=r;openSheet(S.sheet,true)}refresh()}catch(e){toast(e.message)}}
@@ -717,14 +735,23 @@ eadd:v=>{const [k,n]=v.split(':'),L=V().layout,EV=V().ev;let e;
   else if(k==='zone'){e=zn(null,380,240,240,160);e.area=e.id;
     if(EV){const cols=['#2e3192','#0e5f6e','#7a1f5c','#8a5a00','#1f0055'];EV.tz.push({id:e.id,name:'Tables · Zone '+String.fromCharCode(65+EV.tz.length),price:Math.round((EV.types[0]?.price||500)*4/100)*100,color:cols[EV.tz.length%cols.length],ink:'#fff'})}
     else V().areas.push({id:e.id,name:'New area',min:5000,dep:1000})}
+  else if(k==='block'){const n=V().layout.filter(x=>x.kind==='block').length;e=SM.newBlock('e'+(++mk.n),'Section '+String.fromCharCode(65+n%26),500,330,{price:EV.types[0]?.price||500})}
   else if(k==='standing'){EV.types.push({name:'New ticket',price:EV.types[0]?.price||500,qty:100,sold:0});e={id:'e'+(++mk.n),kind:'standing',type:EV.types.length-1,name:'Standing',x:400,y:250,w:200,h:140,rot:0}}
   else e=fx(k,KLABEL[k].replace(' booth',''),420,280,k==='entrance'?120:k==='bar'?260:160,k==='entrance'?10:70);
   if(k==='zone')L.unshift(e);else L.push(e);S.sel=e.id;render();saveFloor()},
 eseat:v=>{const e=EL(S.sel);const mx={round:10,square:4,long:16,sofa:12,couch:8}[e.kind];e.seats=Math.max(e.kind==='sofa'||e.kind==='couch'?3:1,Math.min(mx,e.seats+ +v));render();saveFloor()},
 erot:()=>{const e=EL(S.sel);e.rot=(e.rot+90)%360;render();saveFloor()},
-edup:()=>{const e=EL(S.sel),c={...e,id:'e'+(++mk.n),x:e.x+40,y:e.y+40};c.name=nextName(areaOf(c));V().layout.push(c);S.sel=c.id;render();saveFloor()},
+bk:v=>{const e=EL(S.sel);if(!e||e.kind!=='block')return;const [k,d]=v.split(':'),n=+d;
+  if(k==='rows')e.rows=Math.max(1,Math.min(40,e.rows+n));else if(k==='cols')e.cols=Math.max(1,Math.min(60,e.cols+n));
+  else if(k==='curve')e.curve=Math.max(0,Math.min(1,Math.round(((e.curve||0)+n/10)*10)/10));else if(k==='taper')e.taper=Math.max(-3,Math.min(4,(e.taper||0)+n));
+  else if(k==='aisle')e.aisle=n>0?Math.min(20,e.aisle?e.aisle+1:4):(e.aisle||0)<=2?0:e.aisle-1;else if(k==='rot')e.rot=((e.rot||0)+n+540)%360-180;
+  render();saveFloor()},
+tpl:v=>{const EV=V().ev;if(!EV)return;if(evSold(EV)>0||EV.orders>0){toast('This event already has sales. Change the map by hand.');return}
+  const T=evTemplate(v,EV);EV.types=T.types;EV.tz=T.tz;EV.layout=T.layout;EV.soldT=[];S.sel=null;render();saveFloor();toast(`${T.name} layout ready. Tap anything to change it.`)},
+edup:()=>{const e=EL(S.sel),c={...e,id:'e'+(++mk.n),x:e.x+40,y:e.y+40};if(e.kind==='block'){c.seatIds={};c.name=e.name+' 2';c.x=e.x+60;c.y=e.y+60}else c.name=nextName(areaOf(c));V().layout.push(c);S.sel=c.id;render();saveFloor()},
 edel:()=>{const e=EL(S.sel),EV=V().ev;if(!e)return;
   if(isT(e)&&EV&&EV.soldT.includes(e.id)){toast(`${e.name} is already sold. It stays on the map.`);return}
+  if(e.kind==='block'&&Object.values(e.seatIds||{}).some(id=>EV.soldT.includes(id)||EV.seatSt?.[id]==='held')){toast(`${e.name} has sold seats. It stays on the map.`);return}
   if(isT(e)&&!EV&&atTable(e.id)){toast(`${e.name} has a booking tonight. Move it first.`);return}
   if(e.kind==='standing'&&EV){const t=EV.types[e.type];if(t?.sold){toast(`${t.name} has sales. It stays on the map.`);return}EV.types.splice(e.type,1);EV.layout.forEach(x=>{if(x.kind==='standing'&&x.type>e.type)x.type--})}
   if(e.kind==='zone'&&EV){if(EV.tables.some(t=>t.zone===e.area&&t.sold)){toast('This zone has sold tables. It stays on the map.');return}EV.tz=EV.tz.filter(z=>z.id!==e.area)}
@@ -762,6 +789,7 @@ document.addEventListener('input',e=>{const el=e.target;if(!S&&!PUB)return;
   if(el.dataset.social!=null){CFG().socials[el.dataset.social]=el.value.trim();saveSettings({socials:CFG().socials},'socials')}
   if(el.dataset.vset){const k=el.dataset.vset,v=el.value.trim();if(k==='name'){if(v.length>=2){VENUES[S.vi].name=v;later('vname',()=>PATCH(vurl(''),{name:v}))}}else{VENUES[S.vi].where=v;saveSettings({where:v},'where')}}
   if(el.id==='ename'){const x=EL(S.sel);x.name=el.value||x.name;drawMap();saveFloor()}
+  if(el.dataset.bk&&el.tagName!=='SELECT'){const x=EL(S.sel);if(x){const k=el.dataset.bk;if(k==='price')x.price=Math.max(0,+el.value||0);else if(k==='rowStart'&&/^[a-z]$/i.test(el.value))x.rowStart=el.value.toUpperCase();drawMap();saveFloor()}}
   if(el.id==='eaname'){AR(EL(S.sel).area).name=el.value||'Area';drawMap();saveFloor()}
   if(el.dataset.tt){const [i,k]=el.dataset.tt.split(':'),t=V().ev.types[+i];t[k]=k==='name'?el.value:Math.max(k==='qty'?t.sold||0:0,+el.value||0);if(k==='name'){const z=V().layout.find(x=>x.kind==='standing'&&x.type===+i);if(z)z.name=el.value}drawMap();saveFloor()}
 });
@@ -786,7 +814,8 @@ reports:'<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',messages:'<path d="M21 1
 const tiers=()=>CFG().tiers;
 const tierOf=g=>[...tiers()].reverse().find(t=>g.spend>=t.min)||tiers()[0];
 const points=g=>g.pts??0;
-const tSold=e=>(e.tables||[]).filter(t=>t.sold),evSold=e=>e.types.reduce((s,t)=>s+t.sold,0)+tSold(e).reduce((s,t)=>s+t.seats,0),evCap=e=>e.types.reduce((s,t)=>s+t.qty,0)+(e.tables||[]).reduce((s,t)=>s+t.seats,0),evRev=e=>e.revenue??0;
+const bkIds=e=>e.layout.filter(b=>b.kind==='block').flatMap(b=>Object.values(b.seatIds||{}));
+const tSold=e=>(e.tables||[]).filter(t=>t.sold),evSold=e=>e.types.reduce((s,t)=>s+t.sold,0)+tSold(e).reduce((s,t)=>s+t.seats,0)+bkIds(e).filter(id=>e.soldT.includes(id)).length,evCap=e=>e.types.reduce((s,t)=>s+t.qty,0)+(e.tables||[]).reduce((s,t)=>s+t.seats,0)+bkIds(e).length,evRev=e=>e.revenue??0;
 const EVL=id=>S.events.find(e=>e.id===id);
 const evAllClosed=e=>{const all=[...e.types,...(e.seatMap?e.tz:[])];return all.length>0&&all.every(t=>t.closed)};
 const SEG={all:['Everyone who agreed',g=>true],vip:['VIP guests',g=>g.tags.includes('VIP')],regular:['Regulars, 5+ visits',g=>g.visits>=5],lapsed:['Not seen in 45 days',g=>g.lastAt&&Date.now()-new Date(g.lastAt)>45*864e5],tix:['Bought tickets before',g=>g.tix],bday:['Birthday in the next month',g=>g.bday]};
@@ -842,16 +871,49 @@ function vEvent(e){
   <form id="gencodes" class="promoadd"><label class="f">Name<input id="gname" placeholder="Influencers" autocomplete="off" maxlength="24"></label><label class="f">How many codes<input id="gn" type="number" min="1" max="500" value="10" inputmode="numeric"></label><label class="f">Discount %<input id="goff" type="number" min="1" max="100" value="100" inputmode="numeric"></label><label class="f">Each code works<select id="gper"><option value="1">Once</option><option value="2">2 times</option><option value="5">5 times</option><option value="10">10 times</option></select></label><div class="f telf" style="grid-column:1/-1">Only for one guest (optional)${telField({id:'gguest',ph:'Their WhatsApp number',label:'Their WhatsApp number'})}</div><button class="btn sm" type="submit">Generate codes</button></form></div></div></div>
   <div>${evPhoneFor(e)}<p class="hint" style="text-align:center">${e.status==='draft'?'Put it on sale to open the ticket page':'This phone is live: tickets bought here are real orders'}</p></div></div>`;
 }
-const newEVP=()=>({step:'info',cart:{},tables:[],holders:[],promo:null,promoOpen:false,pm:'card',hold:0,zoom:'fit',order:null,done:null,busy:false});
+const newEVP=()=>({step:'info',cart:{},tables:[],seats:[],holders:[],promo:null,promoOpen:false,pm:'card',hold:0,zoom:'fit',order:null,done:null,busy:false});
 const ZCOL=['#bfeaff','#dcf5c4','#ffffb3'];
 const tz=(e,id)=>e.tz.find(z=>z.id===id);
 const feePctOf=e=>e.fees?e.fees.feeBps/100:CFG().feePct,vatPctOf=e=>e.fees?e.fees.feeVatBps/100:CFG().vatPct;
 /* Totals: from the server once seats are held (it applies the promo, fee and VAT on fees), an estimate before. */
+/** A seat of a seated section: its section, row and number. */
+function seatOf(e,id){for(const b of e.layout){if(b.kind!=='block'||!b.seatIds)continue;const lab=Object.keys(b.seatIds).find(l=>b.seatIds[l]===id);if(lab){const [row,num]=lab.split('-');return {b,row,num,label:lab,text:`${b.name} · Row ${row}, Seat ${num}`}}}return null}
 function evCalc(e){const P=S.evp;let tickets=0,n=0;e.types.forEach((t,i)=>{const q=P.cart[i]||0;tickets+=q*t.price;n+=q});P.tables.forEach(id=>{const t=e.tables.find(x=>x.id===id);if(!t)return;tickets+=t.seats*(tz(e,t.zone)?.price||0);n+=t.seats});
+  (P.seats||[]).forEach(id=>{const x=seatOf(e,id);if(x){tickets+=x.b.price;n++}});
   if(P.order){const T=P.order.totals;return {n,tickets:T.tickets/100,off:T.discount/100,vat:T.feeVat/100,fees:T.fee/100,total:T.total/100}}
   const fees=Math.round(tickets*feePctOf(e))/100,vat=Math.round(fees*vatPctOf(e))/100;return {n,tickets,off:0,vat,fees,total:tickets+vat+fees}}
-function evLines(e){const P=S.evp,L=[];if(P.order?.lines?.length){P.order.lines.forEach(l=>{for(let k=0;k<l.tickets;k++)L.push(l.seat?'Table '+l.seat:l.zone)});return L}e.types.forEach((t,i)=>{for(let k=0;k<(P.cart[i]||0);k++)L.push(t.name)});P.tables.forEach(id=>{const t=e.tables.find(x=>x.id===id);for(let k=0;k<t.seats;k++)L.push('Table '+t.name)});return L}
+function evLines(e){const P=S.evp,L=[];if(P.order?.lines?.length){P.order.lines.forEach(l=>{for(let k=0;k<l.tickets;k++)L.push(l.place||(l.seat?'Table '+l.seat:l.zone))});return L}e.types.forEach((t,i)=>{for(let k=0;k<(P.cart[i]||0);k++)L.push(t.name)});P.tables.forEach(id=>{const t=e.tables.find(x=>x.id===id);if(t)for(let k=0;k<t.seats;k++)L.push('Table '+t.name)});(P.seats||[]).forEach(id=>{const x=seatOf(e,id);if(x)L.push(x.text)});return L}
 function evArea(e,el){const z=e.layout.filter(x=>x.kind==='zone');if(!z.length)return e.tz[0]?.id;const h=z.find(z=>el.x>=z.x&&el.x<=z.x+z.w&&el.y>=z.y&&el.y<=z.y+z.h);if(h)return h.area;let best=null,bd=1e9;z.forEach(z=>{const d=Math.hypot(el.x-(z.x+z.w/2),el.y-(z.y+z.h/2));if(d<bd){bd=d;best=z.area}});return best||e.tz[0].id}
+/* ---------- ready layouts for an event map ---------- */
+const TPLS=[['theatre','Theatre','Stage, stalls in curved rows and a balcony'],['concert','Concert','Standing pit, side tiers and seats at the back'],['club','Club','Dance floor, VIP tables and a bar'],['standing','Standing','Golden circle and general admission'],['gala','Gala dinner','Round tables facing a stage']];
+function tplIcon(k){const c='var(--ink)',t='var(--teal)';const I={
+  theatre:`<rect x="10" y="3" width="14" height="4" rx="1.5" fill="${c}"/>${[10,14,18].map(y=>`<path d="M5 ${y+2}q12 -4 24 0" stroke="${t}" stroke-width="2.2" fill="none" stroke-dasharray="1.2 2.2" stroke-linecap="round"/>`).join('')}`,
+  concert:`<rect x="10" y="3" width="14" height="4" rx="1.5" fill="${c}"/><rect x="11" y="9" width="12" height="7" rx="2" fill="${t}" opacity=".35"/><path d="M4 10l4 8M30 10l-4 8" stroke="${t}" stroke-width="2.2" stroke-dasharray="1.2 2.2" stroke-linecap="round"/><path d="M9 21h16" stroke="${t}" stroke-width="2.2" stroke-dasharray="1.2 2.2" stroke-linecap="round"/>`,
+  club:`<rect x="12" y="3" width="10" height="4" rx="1.5" fill="${c}"/><rect x="11" y="9" width="12" height="9" rx="2" fill="${t}" opacity=".35"/><circle cx="5.5" cy="11" r="3" fill="${t}"/><circle cx="5.5" cy="19" r="3" fill="${t}"/><circle cx="28.5" cy="11" r="3" fill="${t}"/><circle cx="28.5" cy="19" r="3" fill="${t}"/>`,
+  standing:`<rect x="9" y="3" width="16" height="4" rx="1.5" fill="${c}"/><rect x="11" y="9" width="12" height="4" rx="1.5" fill="${t}" opacity=".6"/><rect x="5" y="14" width="24" height="9" rx="2" fill="${t}" opacity=".3"/>`,
+  gala:`<rect x="11" y="3" width="12" height="4" rx="1.5" fill="${c}"/>${[[8,12],[17,12],[26,12],[8,20],[17,20],[26,20]].map(([x,y])=>`<circle cx="${x}" cy="${y}" r="3.2" fill="${t}"/>`).join('')}`,
+  block:[6,11,16,21].map(y=>[0,1,2,3,4,5].map(i=>`<circle cx="${5+i*4.8}" cy="${y}" r="1.7" fill="${t}"/>`).join('')).join('')};
+  return `<svg viewBox="0 0 34 26">${I[k]||''}</svg>`}
+/** A full map to start from. Prices follow the event's first ticket price. */
+function evTemplate(k,ev){const p=Math.max(100,ev.types[0]?.price||ev.tz[0]?.price||500),r=v=>Math.round(v/50)*50,id=()=>'e'+(++mk.n),B=(n,x,y,o)=>SM.newBlock(id(),n,x,y,o),door=()=>fx('entrance','Entrance',440,618,120,10);
+  const st=(i,name,x,y,w,h)=>({id:id(),kind:'standing',type:i,name,x,y,w,h,rot:0});
+  if(k==='theatre')return {name:'Theatre',types:[],tz:[],layout:[fx('stage','Stage',320,24,360,74),
+    B('Stalls Left',300,262,{rows:11,cols:7,curve:.2,rot:14,price:r(p*2),numDir:'rtl'}),B('Stalls Centre',500,250,{rows:11,cols:14,curve:.45,price:r(p*3)}),B('Stalls Right',700,262,{rows:11,cols:7,curve:.2,rot:-14,price:r(p*2)}),
+    B('Balcony',500,490,{rows:6,cols:32,aisle:8,curve:.3,price:r(p),rowStart:'L'}),door()]};
+  if(k==='concert')return {name:'Concert',types:[{name:'Fan pit',price:r(p*2),qty:300,sold:0},{name:'General standing',price:r(p),qty:700,sold:0}],tz:[],layout:[fx('stage','Stage',330,20,340,80),
+    st(0,'Fan pit',340,128,320,120),st(1,'General standing',270,268,460,140),
+    B('Left tier',165,250,{rows:9,cols:9,curve:.15,rot:30,price:r(p*1.5)}),B('Right tier',835,250,{rows:9,cols:9,curve:.15,rot:-30,price:r(p*1.5)}),
+    B('Back seats',500,505,{rows:5,cols:30,aisle:10,curve:.2,price:r(p*1.2)}),fx('bar','Bar',40,560,190,46),door()]};
+  if(k==='club'){const a='eA'+Date.now(),b='eB'+Date.now();return {name:'Club',types:[{name:'Dance floor',price:r(p),qty:400,sold:0}],
+    tz:[{id:a,name:'VIP · Zone A',price:r(p*3),color:'#2e3192',ink:'#fff'},{id:b,name:'VIP · Zone B',price:r(p*2),color:'#0e5f6e',ink:'#fff'}],
+    layout:[zn(a,30,90,240,440),zn(b,730,90,240,440),fx('dj','DJ',420,24,160,60),st(0,'Dance floor',300,110,400,240),fx('bar','Bar',320,400,360,56),
+      ...[0,1,2,3].map(i=>mk('sofa','A'+(i+1),150,178+i*98,8)),...[0,1,2,3].map(i=>mk('sofa','B'+(i+1),850,178+i*98,8)),door()]}}
+  if(k==='standing')return {name:'Standing',types:[{name:'Golden circle',price:r(p*2),qty:200,sold:0},{name:'General admission',price:r(p),qty:1200,sold:0}],tz:[],layout:[fx('stage','Stage',300,24,400,80),
+    st(0,'Golden circle',330,130,340,120),st(1,'General admission',170,272,660,260),fx('bar','Bar',40,190,56,300),fx('bar','Bar',904,190,56,300),door()]};
+  const a='eF'+Date.now(),b='eG'+Date.now();
+  return {name:'Gala dinner',types:[],tz:[{id:a,name:'Front tables',price:r(p*3),color:'#2e3192',ink:'#fff'},{id:b,name:'Gala tables',price:r(p*2),color:'#0e5f6e',ink:'#fff'}],
+    layout:[zn(a,150,116,700,180),zn(b,60,310,880,290),fx('stage','Stage',350,24,300,70),...[0,1,2,3].map(i=>mk('round','F'+(i+1),260+i*160,206,10)),
+      ...[0,1,2,3,4].map(i=>mk('round','G'+(i+1),160+i*170,385,10)),...[0,1,2,3,4].map(i=>mk('round','G'+(i+6),160+i*170,525,10)),door()]}}
 /** The starting seat map for a new event: stage, two table zones and a standing zone per ticket type. */
 function defaultEventLayout(ev){
   ev.tz=[{id:'eA'+Date.now(),name:'VIP Lounge · Zone A',price:Math.round((ev.types[0]?.price||500)*6/100)*100,color:'#2e3192',ink:'#fff'},{id:'eB'+Date.now(),name:'VIP Tables · Zone B',price:Math.round((ev.types[0]?.price||500)*5/100)*100,color:'#0e5f6e',ink:'#fff'}];
@@ -921,8 +983,8 @@ function ticketPreview(e,k){const VV=e.venue||VENUES[S.vi],P=S.evp,h=(P.done||[]
 /* The ticket page, from the public API. Staff see the same live page in a phone. */
 const PEV={};
 function pubEventFrom(p){const e=eventFrom({id:p.event.id,title:p.event.title,startsAt:p.event.startsAt,status:'published',lineup:p.event.lineup,color:p.event.color,posterUrl:p.event.posterUrl,seatMap:p.event.seatMap,
-  zones:p.zones.map(z=>({...z,capacity:z.left})),seats:p.seats,soldByZone:{},soldSeats:p.seats.filter(s=>s.taken).map(s=>s.id)});
-  e.venue=p.venue;e.fees=p.fees;e.maxPerOrder=p.event.maxPerOrder;e.rules=p.event.rules;e.pub=true;return e}
+  zones:p.zones.map(z=>({...z,capacity:z.left})),seats:p.seats,soldByZone:{},soldSeats:p.seats.filter(s=>s.taken&&!s.held).map(s=>s.id)});
+  e.venue=p.venue;e.fees=p.fees;e.holdMinutes=p.holdMinutes;e.maxPerOrder=p.event.maxPerOrder;e.rules=p.event.rules;e.pub=true;return e}
 async function loadPubEvent(id){PEV[id]=pubEventFrom(await pubGet(`/events/${id}`));return PEV[id]}
 function evPhoneFor(e){if(e.status==='draft'||e.status==='ended')return evPhone(e);const p=PEV[e.id];if(!p){loadPubEvent(e.id).then(render).catch(()=>{});return evPhone(e)}return evPhone(p)}
 const curEv=()=>GUEST?PEV[GUEST.eventId]:(PEV[S.evSel]||EVL(S.evSel));
@@ -943,10 +1005,10 @@ const DEF_RULES=e=>[`Doors open at ${e.doors}.`,'21+ with a valid ID. Every gues
 function evPhone(e){
   const VV=evVenue(e),P=S.evp,C=evCalc(e);
   const logo=VV.logoUrl?`<img src="${esc(VV.logoUrl)}" alt="" class="vlogo" style="width:38px;height:38px">`:`<span class="vlogo mono" style="width:38px;height:38px;font-size:15px">${esc(VV.name.split(' ').map(w=>w[0]).join('').slice(0,2))}</span>`;
-  const prices=[...e.types.filter(t=>t.sold<t.qty).map(t=>t.price),...(e.seatMap?e.tz.filter(z=>!z.closed).map(z=>z.price):[])],from=prices.length?Math.min(...prices):0;
+  const prices=[...e.types.filter(t=>t.sold<t.qty&&!t.closed).map(t=>t.price),...(e.seatMap?[...e.tz.filter(z=>!z.closed).map(z=>z.price),...e.layout.filter(b=>b.kind==='block'&&!b.closed&&(b.left==null||b.left>0)).map(b=>b.price)]:[])],from=prices.length?Math.min(...prices):0;
   const sumbar=`<div class="evsum"><div><b>(${C.n})</b> tickets<br><span>${esc([...new Set(evLines(e))].slice(0,2).join(', '))}</span></div><div class="evtot"><div><span>Tickets</span><span class="num">${egp2(C.tickets)}</span></div>${C.off?`<div><span>Promo ${esc(P.order?.promo||'')}</span><span class="num">−${egp2(C.off)}</span></div>`:''}<div><span>Fees ${feePctOf(e)}%</span><span class="num">${egp2(C.fees)}</span></div><div><span>VAT ${vatPctOf(e)}% on fees</span><span class="num">${egp2(C.vat)}</span></div><div class="t"><span>Total</span><span class="num">${egp2(C.total)}</span></div></div></div>`;
   const steps=['Seats','Details','Payment'],si={seats:0,details:1,pay:2,paying:2}[P.step];
-  const flowHead=`<div class="evfh"><button class="x" data-a="${si?'tkprev':'tkinfo'}" aria-label="Back">←</button><span class="hold">${P.order?`Tickets held for <b id="holdt">${mmss(P.hold)}</b>`:'Pick your tickets'}</span><button class="x" data-a="tkinfo" aria-label="Close">×</button></div><div class="evsteps">${steps.map((s,i)=>`<span class="${i<si?'done':i===si?'on':''}"><i>${i<si?'✓':i+1}</i>${s}</span>`).join('')}</div>`;
+  const flowHead=`<div class="evfh"><button class="x" data-a="${si?'tkprev':'tkinfo'}" aria-label="Back">←</button><span class="hold ${P.order&&P.hold<=120?'low':''}" id="holdbox">${P.order?`<svg class="hring" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" stroke-opacity=".18" stroke-width="2.4"/><circle id="holdr" cx="10" cy="10" r="8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="50.27" stroke-dashoffset="${(50.27*(1-P.hold/HOLD_S())).toFixed(2)}" transform="rotate(-90 10 10)"/></svg>Held for you <b id="holdt">${mmss(P.hold)}</b>`:'Pick your seats'}</span><button class="x" data-a="tkinfo" aria-label="Close">×</button></div><div class="evsteps">${steps.map((s,i)=>`<span class="${i<si?'done':i===si?'on':''}"><i>${i<si?'✓':i+1}</i>${s}</span>`).join('')}</div>`;
   const draft=e.status==='draft'||!e.pub;
   let body,bar='';
   if(P.step==='info'){
@@ -963,11 +1025,15 @@ function evPhone(e){
     bar=sumbar+`<div class="evbar" style="border:0;padding-top:0"><button class="gbtn" data-a="tknext" ${C.n&&!P.busy?'':'disabled'}>${P.busy?'Holding your tickets…':'Continue →'}</button></div>`;
   }
   else if(P.step==='seats'){
-    body=flowHead+`<div class="gbody" style="padding-top:8px"><div class="zoomrow"><span style="font-size:13px;color:#5b6280">Tap a zone or a table</span><div class="zoom"><button data-a="zoom" data-v="-1" aria-label="Zoom out" ${P.zoom==='fit'?'disabled':''}>−</button><span class="num">${P.zoom==='fit'?'Whole map':Math.round(P.zoom*100)+'%'}</span><button data-a="zoom" data-v="1" aria-label="Zoom in">+</button>${P.zoom==='fit'?'':'<button data-a="zoom" data-v="fit" class="fitb" aria-label="Show the whole map">Fit</button>'}</div></div><div class="evmap ${P.zoom==='fit'?'fit':''}">${evMap(e)}</div>
-     <div class="legend" style="margin:0;font-size:12px;gap:6px 12px">${e.types.map((t,i)=>`<span><i style="background:${ZCOL[i%3]}"></i>${esc(t.name)}</span>`).join('')}${e.tz.map(z=>`<span><i style="background:${z.color}"></i>${esc(z.name)}</span>`).join('')}<span><i style="background:#c9d0d9"></i>Sold</span></div>
-     ${e.types.map((t,i)=>P.cart[i]?`<div class="tkrow sel"><div><b>${esc(t.name)}</b><br><span class="num" style="font-size:13px">${egp(t.price)} each</span></div><div class="stepper"><button data-a="tk" data-v="${i}:-1" aria-label="Remove one">−</button><b class="num">${P.cart[i]}</b><button data-a="tk" data-v="${i}:1" aria-label="Add one">+</button></div></div>`:'').join('')}
-     ${P.tables.map(id=>{const t=e.tables.find(x=>x.id===id),Z=tz(e,t.zone)||{name:'Table',price:0};return `<div class="tkrow sel"><div><b>${esc(Z.name)}</b><br><span style="font-size:13px">Table ${esc(t.name)} · ${t.seats} seats · ${t.seats} × ${egp(Z.price)}</span></div><button class="chip" data-a="tbl" data-v="${t.id}">Remove</button></div>`}).join('')}</div>`;
-    bar=sumbar+`<div class="evbar" style="border:0;padding-top:0"><button class="gbtn" data-a="tknext" ${C.n&&!P.busy?'':'disabled'}>${P.busy?'Holding your tickets…':'Continue →'}</button></div>`;
+    const mine=new Set([...P.seats,...P.tables]),D=SM.tiers(e);
+    const map=SM.frame('ev:'+e.id,e,{mode:'pick',mine,cart:P.cart,seatState:id=>e.seatSt?.[id]||'free',tableState:t=>{const st=e.seatSt?.[t.id];return st==='held'?'held':st==='sold'||e.soldT.includes(t.id)?'sold':'free'},zoneOf:t=>evArea(e,t),label:'Seat map of '+e.name});
+    const picked=[...e.types.map((t,i)=>P.cart[i]?`<div class="tkrow sel"><div><b>${esc(t.name)}</b><br><span class="num" style="font-size:13px">Standing · ${egp(t.price)} each</span></div><div class="stepper"><button data-a="tk" data-v="${i}:-1" aria-label="Remove one">−</button><b class="num">${P.cart[i]}</b><button data-a="tk" data-v="${i}:1" aria-label="Add one">+</button></div></div>`:''),
+      ...P.tables.map(id=>{const t=e.tables.find(x=>x.id===id);if(!t)return '';const Z=tz(e,t.zone)||{name:'Table',price:0};return `<div class="tkrow sel"><div><b>Table ${esc(t.name)}</b><br><span style="font-size:13px">${esc(Z.name)} · ${t.seats} seats · ${egp(Z.price*t.seats)}</span></div><button class="chip" data-a="tbl" data-v="${t.id}">Remove</button></div>`}),
+      ...P.seats.map(id=>{const x=seatOf(e,id);if(!x)return '';return `<div class="tkrow sel"><div><b>Row ${esc(x.row)}, Seat ${esc(x.num)}</b><br><span style="font-size:13px">${esc(x.b.name)} · ${egp(x.b.price)}</span></div><button class="chip" data-a="seat" data-v="${id}">Remove</button></div>`})].join('');
+    body=flowHead+`<div class="gbody" style="padding-top:8px;gap:12px"><div class="smhint">${P.order?'Add more or tap a seat again to let it go.':'Tap a seat, a table or a standing zone. Pinch or scroll to zoom.'}</div>${map}
+     <div class="smleg">${D.map(t=>`<span class="${t.out?'out':''}"><i style="background:${t.color}"></i><b class="num">${egp(t.price)}</b>${esc(t.names.slice(0,2).join(', '))}${t.names.length>2?' +'+(t.names.length-2):''}</span>`).join('')}<span><i class="mine"></i>Yours</span><span><i class="held"></i>On hold</span><span><i class="sold"></i>Sold</span></div>
+     ${picked?`<div class="stack" style="gap:8px">${picked}</div>`:''}</div>`;
+    bar=sumbar+`<div class="evbar" style="border:0;padding-top:0"><button class="gbtn" data-a="tknext" ${C.n&&!P.busy?'':'disabled'}>${P.busy?'Holding your seats…':'Continue →'}</button></div>`;
   }
   else if(P.step==='details'){
     const L=evLines(e),U=ACCT.user;while(P.holders.length<L.length)P.holders.push(P.holders.length===0&&U?{first:U.first,last:U.last,email:U.email,phone:U.phone,dob:U.dob,gender:U.gender}:{first:'',last:'',email:'',phone:'',dob:'',gender:''});P.holders.length=L.length;
@@ -999,6 +1065,7 @@ function evPhone(e){
 }
 let holdTimer=null,payPoll=null;
 function startHold(sec){clearInterval(holdTimer);S.evp.hold=Math.max(0,sec|0);holdTimer=setInterval(()=>{const P=S.evp;if(!P.order||!['seats','details','pay','paying'].includes(P.step)){clearInterval(holdTimer);return}P.hold=Math.max(0,P.hold-1);const el=$('#holdt');if(el)el.textContent=mmss(P.hold);
+  const ring=$('#holdr');if(ring)ring.setAttribute('stroke-dashoffset',(50.27*(1-P.hold/HOLD_S())).toFixed(2));$('#holdbox')?.classList.toggle('low',P.hold<=120);if(P.hold===120)toast('2 minutes left to finish your order');
   if(P.hold<=0){clearInterval(holdTimer);clearTimeout(payPoll);const z=P.zoom;S.evp=newEVP();S.evp.zoom=z;reloadEv();render();toast('Time is up. Your tickets were released.')}},1000)}
 const scrollPhoneTop=()=>{const g=document.querySelector('.phone .gscroll');if(g)g.scrollTop=0};
 /** Fresh availability after a sale or release. */
@@ -1012,20 +1079,50 @@ function finishOrder(o){const P=S.evp,e=curEv(),L=e?evLines(e):[];clearInterval(
 async function pollOrder(code){clearTimeout(payPoll);try{const o=await pubGet(`/orders/${code}`);if(S.evp.order?.code!==code)return;
   if(o.status==='paid')return finishOrder(o);if(o.status!=='held'){S.evp=newEVP();render();toast('The payment did not go through. Your tickets were released.');return}}catch(_){}
   payPoll=setTimeout(()=>pollOrder(code),3000)}
+/* ---------- seat holds: the first pick starts a 10-minute hold, every change updates it ---------- */
+const HOLD_S=()=>((curEv()?.holdMinutes)||10)*60;
+const pubPut=(u,b)=>api('PUT','/public'+u,b,null);
+const heldQty=zid=>(S.evp.order?.lines||[]).filter(l=>l.zoneId===zid&&!l.seatId).reduce((s,l)=>s+l.qty,0);
+function holdItems(e){const P=S.evp;return [...e.types.map((t,i)=>P.cart[i]?{zoneId:t.zid,qty:P.cart[i]}:null).filter(Boolean),
+  ...P.tables.map(id=>{const el=e.layout.find(x=>x.id===id);return el?{zoneId:el.zone||evArea(e,el),seatId:id}:null}).filter(Boolean),
+  ...P.seats.map(id=>{const x=seatOf(e,id);return x?{zoneId:x.b.id,seatId:id}:null}).filter(Boolean)]}
+/** Puts the picks back to what the server holds (after a seat was taken by someone else). */
+function picksFromOrder(e,o){const P=S.evp;P.cart={};P.tables=[];P.seats=[];(o?.lines||[]).forEach(l=>{
+  if(!l.seatId){const i=e.types.findIndex(t=>t.zid===l.zoneId);if(i>=0)P.cart[i]=(P.cart[i]||0)+l.qty}else if(l.kind==='table')P.tables.push(l.seatId);else P.seats.push(l.seatId)})}
+let holdQ=Promise.resolve();
+function syncHold(){const P=S.evp,e=curEv();if(!e||!e.pub||P.queued)return;P.queued=true;
+  holdQ=holdQ.then(async()=>{P.queued=false;if(S.evp!==P)return;const items=holdItems(e);
+    try{
+      if(!P.order){if(!items.length)return;const o=await pubPost(`/events/${e.id}/hold`,{items});
+        if(S.evp!==P){pubPost(`/orders/${o.code}/release`).catch(()=>{});return}P.order=o;startHold(o.secondsLeft);toast(`Held for you for ${Math.round(o.secondsLeft/60)} minutes`)}
+      else{const o=await pubPut(`/orders/${P.order.code}/items`,{items});if(S.evp!==P)return;
+        if(o.status!=='held'){P.order=null;clearInterval(holdTimer);P.hold=0}else{P.order=o;startHold(o.secondsLeft)}}
+    }catch(x){if(S.evp!==P)return;toast(x.message);
+      if(x.code==='hold_expired'){clearInterval(holdTimer);P.order=null;P.cart={};P.tables=[];P.seats=[]}else picksFromOrder(e,P.order);
+      reloadEv()}
+    render()})}
+// Leaving the page lets the seats go right away instead of in 10 minutes.
+addEventListener('pagehide',()=>{const P=S?.evp;if(P?.order?.status==='held'&&['seats','details','pay'].includes(P.step))try{navigator.sendBeacon(`/api/public/orders/${P.order.code}/release`)}catch(_){}});
+// Other guests' picks show up while you choose.
+setInterval(()=>{const P=S?.evp,e=GUEST?.kind==='event'&&curEv();if(!e||P.step!=='seats'||document.hidden||SM.busy()||P.queued)return;loadPubEvent(e.id).then(()=>{if(S.evp.step==='seats'&&!SM.busy())render()}).catch(()=>{})},15000);
 const EVACT={
 tkstart:()=>{if(!ACCT.user){ACCT.view='login';ACCT.next='buy';render();return}const z=S.evp.zoom;S.evp=newEVP();S.evp.zoom=z;S.evp.step='seats';render();scrollPhoneTop()},
 tkinfo:async()=>{clearTimeout(payPoll);if(S.evp.step!=='paying')await releaseHold();const z=S.evp.zoom;S.evp=newEVP();S.evp.zoom=z;reloadEv();render()},
-tk:v=>{const [i,d]=v.split(':').map(Number),e=curEv(),t=e.types[i],P=S.evp,c=P.cart,max=e.maxPerOrder||10,others=evCalc(e).n-(c[i]||0);c[i]=Math.max(0,Math.min(t.qty-t.sold,max-others,(c[i]||0)+d));if(P.order)releaseHold();render()},
-tbl:v=>{const P=S.evp;P.tables=P.tables.includes(v)?P.tables.filter(x=>x!==v):[...P.tables,v];if(P.order)releaseHold();render()},
+tk:v=>{const [i,d]=v.split(':').map(Number),e=curEv(),t=e.types[i],P=S.evp,c=P.cart,max=e.maxPerOrder||10,others=evCalc(e).n-(c[i]||0),held=heldQty(t.zid);
+  const room=t.qty-t.sold+held,next=Math.max(0,Math.min(room,max-others,(c[i]||0)+d));if(d>0&&next===(c[i]||0)){toast(next>=room?`No more ${t.name} tickets left`:`Max ${max} tickets per order`);return}c[i]=next;render();syncHold()},
+tbl:v=>{const P=S.evp,e=curEv();if(!P.tables.includes(v)){const t=e.tables.find(x=>x.id===v);if(t&&evCalc(e).n+t.seats>(e.maxPerOrder||10)){toast(`Max ${e.maxPerOrder||10} tickets per order`);return}}P.tables=P.tables.includes(v)?P.tables.filter(x=>x!==v):[...P.tables,v];render();syncHold()},
+seat:(v,el)=>{const P=S.evp,e=curEv(),box=el.closest?.('.smap');
+  // Too small to aim at: zoom in on that spot first.
+  if(box&&!P.seats.includes(v)&&SM.scaleOf(box)*SM.R<5){const c=el.tagName==='circle'?el:el.querySelector('circle');if(c){SM.zoomTo(box,+c.getAttribute('cx'),+c.getAttribute('cy'),Math.max(2.2,7/(SM.scaleOf(box)*SM.R)));return}}
+  if(!P.seats.includes(v)&&evCalc(e).n+1>(e.maxPerOrder||10)){toast(`Max ${e.maxPerOrder||10} tickets per order`);return}
+  P.seats=P.seats.includes(v)?P.seats.filter(x=>x!==v):[...P.seats,v];render();syncHold()},
+smz:(v,el)=>{const box=el.closest('.smap');if(!box)return;if(v==='fit')SM.fit(box);else SM.zoomAt(box,v==='in'?1.6:1/1.6)},
 zoom:v=>{const P=S.evp;if(v==='fit'){P.zoom='fit';render();return}if(P.zoom==='fit'){if(+v>0)P.zoom=1;render();return}const n=P.zoom+(+v)*.5;P.zoom=n<1?'fit':Math.min(3,n);render()},
 tkprev:()=>{const P=S.evp;if(P.step==='paying'){clearTimeout(payPoll);P.step='pay'}else P.step={details:'seats',pay:'details'}[P.step]||'seats';render()},
 tknext:async()=>{const P=S.evp,e=curEv();
   if(P.step==='seats'){if(!evCalc(e).n||P.busy)return;
-    if(!P.order){P.busy=true;render();
-      const items=[...e.types.map((t,i)=>P.cart[i]?{zoneId:t.zid,qty:P.cart[i]}:null).filter(Boolean),...P.tables.map(id=>{const el=e.layout.find(x=>x.id===id);return {zoneId:el.zone||evArea(e,el),seatId:id}})];
-      try{const o=await pubPost(`/events/${e.id}/hold`,{items});P.order=o;startHold(o.secondsLeft)}
-      catch(x){P.busy=false;toast(x.message);reloadEv();render();return}
-      P.busy=false}
+    P.busy=true;render();syncHold();await holdQ;P.busy=false;
+    if(!P.order||S.evp!==P||!evCalc(e).n){render();return}
     P.step='details'}
   else if(P.step==='details'){const bad=P.holders.findIndex((h,i)=>!h.first.trim()||!h.last.trim()||(i===0&&(!/^\S+@\S+\.\S+$/.test(h.email)||!ph20(h.phone)))||(h.email&&!/^\S+@\S+\.\S+$/.test(h.email))||(h.phone&&!ph20(h.phone)));
     if(bad>=0){toast(bad?`Ticket ${bad+1}: add first and last name. Email and mobile are optional.`:'Your ticket: add your name, email and a valid mobile number');return}P.step='pay'}
@@ -1153,6 +1250,7 @@ document.addEventListener('input',e=>{const el=e.target;if(!S)return;
 document.addEventListener('change',e=>{const el=e.target;if(!S)return;
   if(el.dataset.camp&&el.tagName==='SELECT'){S.camp[el.dataset.camp]=el.value;openSheet({k:'camp'},true)}
   if(el.dataset.evp==='consent')S.evp.consent=el.checked;
+  if(el.dataset.bk==='numDir'){const x=EL(S.sel);if(x){x.numDir=el.value;drawMap();saveFloor()}}
   if(el.dataset.evh&&el.tagName==='SELECT'){const [i,k]=el.dataset.evh.split(':');S.evp.holders[+i][k]=fv(el)}
   if(el.dataset.inv&&S.inv){const k=el.dataset.inv;S.inv[k]=fv(el);if(k==='zone'){S.inv.seat='';S.inv.qty=1;openSheet({k:'invite'},true)}}
   if(el.dataset.acc&&ACCT.user)ACCT.user[el.dataset.acc]=el.value;
@@ -1189,9 +1287,33 @@ const ro=new ResizeObserver(()=>{const m=$('#map');if(m)m.innerHTML=mapSVG(m.cli
 let GUEST=null;
 function passScreen(p){const night=p.type==='ticket'?new Date(p.startsAt).toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short',timeZone:TZ}):dparts(p.date).slice(0,3).join(' ');
   const qr=location.origin+location.pathname;
-  return `<div class="gbody"><div class="wpass" style="--pc:#2e3192"><div class="pass-h"><b>${esc(p.venue)}</b><span>${esc(p.type==='ticket'?p.ticketType+(p.seat?' · '+p.seat:''):'Table booking')}</span></div><div class="pt"><small>${p.type==='ticket'?'Event':'Booking'}</small><b>${esc(p.type==='ticket'?p.event:p.venue)}</b></div><div class="pr"><div><small>Date</small>${esc(night)}</div><div><small>${p.type==='ticket'?'Doors':'Time'}</small>${esc(p.type==='ticket'?t12((()=>{const [h,m]=new Intl.DateTimeFormat('en-GB',{timeZone:TZ,hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(p.startsAt)).split(':').map(Number);return h*60+m})()):t12(hm2min(p.time.split(' ')[0])))}</div></div><div class="pr"><div><small>Guest</small>${esc(p.name)}</div><div><small>Status</small>${p.used?'Checked in':'Valid'}</div></div><div class="pq"><span>${qrSVG(qr)}</span><small>Show this at the door</small></div></div>
+  return `<div class="gbody"><div class="wpass" style="--pc:#2e3192"><div class="pass-h"><b>${esc(p.venue)}</b><span>${esc(p.type==='ticket'?p.ticketType:'Table booking')}</span></div><div class="pt"><small>${p.type==='ticket'?'Event':'Booking'}</small><b>${esc(p.type==='ticket'?p.event:p.venue)}</b></div><div class="pr"><div><small>Date</small>${esc(night)}</div><div><small>${p.type==='ticket'?'Doors':'Time'}</small>${esc(p.type==='ticket'?t12((()=>{const [h,m]=new Intl.DateTimeFormat('en-GB',{timeZone:TZ,hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(p.startsAt)).split(':').map(Number);return h*60+m})()):t12(hm2min(p.time.split(' ')[0])))}</div></div><div class="pr"><div><small>Guest</small>${esc(p.name)}</div><div><small>Status</small>${p.used?'Checked in':'Valid'}</div></div>${placeBoxes(p)}<div class="pq"><span>${qrSVG(qr)}</span><small>Show this at the door</small></div></div>
   ${p.googleWalletUrl||p.appleWallet?.configured?`<div class="wallets">${p.appleWallet?.configured?`<a class="wbtn" href="${esc(p.appleWallet.url)}"><svg viewBox="0 0 24 24" width="20" height="20"><rect x="3" y="5" width="18" height="14" rx="3" fill="#fff"/><rect x="3" y="8" width="18" height="3" fill="#ff5f57"/><rect x="3" y="11" width="18" height="3" fill="#febc2e"/><rect x="3" y="14" width="18" height="3" fill="#28c840"/></svg><span><small>Add to</small>Apple Wallet</span></a>`:''}${p.googleWalletUrl?`<a class="wbtn" href="${esc(p.googleWalletUrl)}" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" width="20" height="20"><rect x="3" y="5" width="18" height="14" rx="3" fill="#4285f4"/><rect x="3" y="9" width="18" height="3" fill="#34a853"/><rect x="3" y="12" width="18" height="3" fill="#fbbc04"/><rect x="3" y="15" width="18" height="4" rx="1" fill="#ea4335"/></svg><span><small>Add to</small>Google Wallet</span></a>`:''}</div>`:''}
+  ${findSeat(p)}
   <p style="margin:0;font-size:13px;color:#5b6280;text-align:center">Keep this link. Screenshots work too.</p></div>`}
+/** Section / Row / Seat (or Table) in big type on the pass, like a boarding pass. */
+function placeBoxes(p){const cell=(l,v)=>`<div><small>${l}</small><b>${esc(v)}</b></div>`;
+  if(p.type==='ticket'&&p.seat&&p.zoneKind==='seated'){const [row,num]=p.seat.split('-');return `<div class="pseat">${cell('Section',p.ticketType)}${cell('Row',row)}${cell('Seat',num||p.seat)}</div>`}
+  if(p.type==='ticket'&&p.seat)return `<div class="pseat">${cell('Zone',p.ticketType)}${cell('Table',p.seat)}</div>`;
+  if(p.type==='ticket')return `<div class="pseat">${cell('Zone',p.ticketType)}${cell('Entry','Standing')}</div>`;
+  if(p.map)return `<div class="pseat">${cell('Area',p.map.area||'Main')}${cell('Table',p.map.table)}</div>`;return ''}
+/** The map with a walking line from the entrance to this pass's seat, table or zone. */
+function findSeat(p){if(!p.map)return '';
+  let ev,target,what='';
+  if(p.type==='ticket'){ev=eventFrom({id:'pass',title:'',startsAt:p.startsAt,status:'published',zones:p.map.zones,seats:p.map.seats});
+    const z=p.map.zones.find(z=>z.id===p.map.zoneId)||{};
+    if(z.kind==='seated')target={block:z.id,seat:p.map.seatId};
+    else if(z.kind==='table'){target={table:p.map.seatId,area:z.id};what=`Your table is <b>${esc(p.seat||'')}</b> in ${esc(z.name)}.`}
+    else{target={type:ev.types.findIndex(t=>t.zid===z.id)};what=`Your zone is <b>${esc(z.name)}</b>. Stand anywhere inside it.`}}
+  else{const {layout,areas}=floorToLayout(p.map.items);ev={layout,types:[],tz:areas.map(a=>({id:a.id,name:a.name}))};target={table:p.map.tableId};what=`Your table is <b>${esc(p.map.table)}</b>${p.map.area?' in '+esc(p.map.area):''}.`}
+  if(!ev.layout.length)return '';
+  const key='pass:'+(location.pathname.split('/').pop()||'');
+  if(!GUEST.route||GUEST.routeKey!==key){GUEST.route=SM.route(ev,target);GUEST.routeKey=key}
+  const R=GUEST.route;
+  const zoneOf=p.type==='ticket'?t=>evArea(ev,t):t=>areaOf2(t,ev.layout,areas2(ev));
+  const map=SM.frame(key,ev,{mode:'route',target,route:R?.points,zoneOf,focus:R?.points,label:'Map with the way to your place'});
+  return `<div class="findseat"><div class="fsh"><b>Find your ${p.type==='ticket'&&p.zoneKind==='standing'?'zone':p.type==='ticket'&&p.zoneKind==='seated'?'seat':'table'}</b><span>Follow the blue line from the entrance</span></div>${map}<ol class="fsteps">${SM.steps(R,what).map(x=>`<li><span>${x}</span></li>`).join('')}</ol></div>`}
+const areas2=ev=>(ev.tz||[]).map(z=>({id:z.id,name:z.name}));
 function orderScreen(o){const e=PEV[o.eventId],P=o.status;
   const head2=e?`${poster(e)}<div class="gbody" style="padding-bottom:0"><h2 style="font-size:22px">${esc(e.name)}</h2><p style="margin:0;color:#5b6280">${esc(e.night.replace('Tonight · ',''))} · doors ${e.doors} · ${esc(e.venue.name)}</p></div>`:'';
   const body=P==='paid'?`<div class="gbody"><div style="display:flex;justify-content:space-between;align-items:center"><h3 style="font-size:20px">Your tickets</h3><span class="pill p-arrived">Paid</span></div>${o.tickets.map(t=>`<a class="tkrow" href="${esc(t.url)}" style="color:inherit;text-decoration:none"><div><b>${esc(t.name)}</b><br><span style="font-size:13px;color:#5b6280">Open ticket and QR</span></div><span>›</span></a>`).join('')}<div class="amount" style="font-size:14px"><div class="sum"><span>Tickets</span><span class="num">${egp2(o.totals.tickets/100)}</span></div>${o.totals.discount?`<div class="sum"><span>Promo ${esc(o.promo||'')}</span><span class="num">−${egp2(o.totals.discount/100)}</span></div>`:''}<div class="sum"><span>Fees and VAT</span><span class="num">${egp2((o.totals.fee+o.totals.feeVat)/100)}</span></div><div class="sum"><b>Total</b><b class="num">${egp2(o.totals.total/100)}</b></div></div><p style="margin:0;font-size:13px;color:#5b6280">Order ${o.code}. Every guest also got their own ticket by WhatsApp and email.</p></div>`

@@ -35,7 +35,7 @@ const PAGES: Record<string, { title: string; body: (c: ReturnType<typeof company
 <li>Arrive in your booked time slot. The venue may give your table away if you are more than 30 minutes late without telling them.</li>
 <li>Service charge and VAT are added to bills as shown by the venue at the table.</li></ul>
 <h2>Tickets</h2>
-<ul><li>Seats and tickets are held for 15 minutes while you pay. If payment is not finished in time, they are released.</li>
+<ul><li>Seats and tickets are held for 10 minutes while you pay. If payment is not finished in time, they are released.</li>
 <li>Each ticket has its own QR code and lets one person in once. Do not share or resell it. Screenshots work, but the first scan is the only one that counts.</li>
 <li>The venue may refuse entry to anyone who breaks its door rules, is under the age limit or cannot show a valid ID, without a refund.</li>
 <li>Ticket prices are set by the venue. A booking fee and VAT on that fee are added at checkout and shown before you pay.</li></ul>

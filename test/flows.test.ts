@@ -199,12 +199,13 @@ describe('ticketing', () => {
     expect((await api.patch(`${v()}/events/${eventId}`, { status: 'published' })).body.status).toBe('published');
   });
 
-  it('holds seats for 15 minutes and never oversells', async () => {
+  it('holds seats for 10 minutes and never oversells', async () => {
     const pub = await api.get(`/api/public/events/${eventId}`);
     expect(pub.body.priceFrom).toBe(100000);
     const h1 = await api.post(`/api/public/events/${eventId}/hold`, { items: [{ zoneId: standing.id, qty: 2 }] });
     expect(h1.status).toBe(201);
-    expect(h1.body.secondsLeft).toBeGreaterThan(14 * 60);
+    expect(h1.body.secondsLeft).toBeGreaterThan(9 * 60);
+    expect(h1.body.secondsLeft).toBeLessThanOrEqual(10 * 60);
     expect(h1.body.totals).toMatchObject({ tickets: 200000, fee: 10000, feeVat: 1400, total: 211400 });
     const h2 = await api.post(`/api/public/events/${eventId}/hold`, { items: [{ zoneId: standing.id, qty: 2 }] });
     expect(h2.status).toBe(409);
@@ -499,5 +500,89 @@ describe('Policies', () => {
       expect(r.headers['content-type']).toContain('text/html');
       expect(r.body).toContain(t);
     }
+  });
+});
+
+describe('seated sections, live holds and find-your-seat', () => {
+  let eventId: string;
+  let stalls: any;
+  let seats: any[];
+
+  it('saves a block of rows with its layout and keeps seat ids when the rows are sent again', async () => {
+    const e = await api.post(`${v()}/events`, { title: 'Theatre Night', startsAt: new Date(Date.now() + 4 * 86400_000).toISOString() });
+    eventId = e.body.id;
+    const rows = ['A', 'B'].flatMap((r, ri) => [1, 2, 3].map((n) => ({ label: `${r}-${n}`, x: n * 14, y: 100 + ri * 17 })));
+    const zones = [
+      { name: 'Stage', kind: 'decor', shape: 'stage', x: 0, y: 0, w: 100, h: 40 },
+      { name: 'Entrance', kind: 'decor', shape: 'entrance', x: 20, y: 200, w: 60, h: 10 },
+      { name: 'Stalls', kind: 'seated', price: 80000, x: 0, y: 90, w: 60, h: 40, meta: { x: 28, y: 108, rows: 2, cols: 3, curve: 0.3 }, seats: rows },
+    ];
+    const map = await api.put(`${v()}/events/${eventId}/map`, { zones });
+    expect(map.status).toBe(200);
+    stalls = map.body.zones.find((z: any) => z.name === 'Stalls');
+    expect(stalls.meta).toMatchObject({ rows: 2, cols: 3 });
+    expect(stalls.left).toBe(6);
+    const ids = map.body.seats.filter((s: any) => s.zoneId === stalls.id).map((s: any) => s.id).sort();
+    // The editor sends the rows again without ids: same seats, nothing duplicated.
+    const again = await api.put(`${v()}/events/${eventId}/map`, { zones: map.body.zones.map((z: any) => ({ id: z.id, name: z.name, kind: z.kind, shape: z.shape, price: z.price, x: z.x, y: z.y, w: z.w, h: z.h, meta: z.meta, seats: z.kind === 'seated' ? rows : [] })) });
+    expect(again.status).toBe(200);
+    expect(again.body.seats.filter((s: any) => s.zoneId === stalls.id).map((s: any) => s.id).sort()).toEqual(ids);
+    await api.patch(`${v()}/events/${eventId}`, { status: 'published' });
+    seats = (await api.get(`/api/public/events/${eventId}`)).body.seats;
+  });
+
+  it('the first pick starts the hold, changes keep the clock, others see the seat on hold', async () => {
+    const a1 = seats.find((s) => s.label === 'A-1'), a2 = seats.find((s) => s.label === 'A-2'), b1 = seats.find((s) => s.label === 'B-1');
+    const h = await api.post(`/api/public/events/${eventId}/hold`, { items: [{ zoneId: stalls.id, seatId: a1.id }] });
+    expect(h.status).toBe(201);
+    expect(h.body.lines[0]).toMatchObject({ seatId: a1.id, place: 'Stalls · Row A, Seat 1', tickets: 1 });
+    const pub = await api.get(`/api/public/events/${eventId}`);
+    expect(pub.body.seats.find((s: any) => s.id === a1.id)).toMatchObject({ taken: true, held: true });
+    // Someone else cannot take it.
+    expect((await api.post(`/api/public/events/${eventId}/hold`, { items: [{ zoneId: stalls.id, seatId: a1.id }] })).body.error).toBe('seat_taken');
+    // Add A-2, drop A-1, the expiry does not move.
+    const before = h.body.holdExpiresAt;
+    const ch = await api.put(`/api/public/orders/${h.body.code}/items`, { items: [{ zoneId: stalls.id, seatId: a2.id }, { zoneId: stalls.id, seatId: b1.id }] });
+    expect(ch.status).toBe(200);
+    expect(ch.body.holdExpiresAt).toBe(before);
+    expect(ch.body.totals.tickets).toBe(160000);
+    expect(ch.body.lines.map((l: any) => l.seat).sort()).toEqual(['A-2', 'B-1']);
+    const other = await api.post(`/api/public/events/${eventId}/hold`, { items: [{ zoneId: stalls.id, seatId: a1.id }] });
+    expect(other.status).toBe(201);
+    // A pick of nothing lets every seat go.
+    const none = await api.put(`/api/public/orders/${other.body.code}/items`, { items: [] });
+    expect(none.body.status).toBe('expired');
+    // The first hold buys its two seats.
+    const out = await api.post(`/api/public/orders/${h.body.code}/checkout`, { buyer: { firstName: 'Salma', lastName: 'Ali', email: 'salma@example.com', phone: '01077777777' }, attendees: [{ firstName: 'Salma', lastName: 'Ali' }, { firstName: 'Omar', lastName: 'Ali' }] });
+    const payId = out.body.checkoutUrl.split('/').pop();
+    await app.inject({ method: 'POST', url: `/dev/pay/${payId}`, payload: { result: 'paid' } });
+    const order = await api.get(`/api/public/orders/${h.body.code}`);
+    expect(order.body.tickets.map((t: any) => t.label).sort()).toEqual(['Stalls · Row A, Seat 2', 'Stalls · Row B, Seat 1']);
+    const after = await api.get(`/api/public/events/${eventId}`);
+    expect(after.body.seats.find((s: any) => s.id === a2.id)).toMatchObject({ taken: true, held: false });
+    // A changed hold that expired cannot be changed again.
+    await db.update(schema.ticketOrders).set({ holdExpiresAt: new Date(Date.now() - 1000) }).where(eq(schema.ticketOrders.code, other.body.code));
+    expect((await api.put(`/api/public/orders/${other.body.code}/items`, { items: [] })).status).toBe(409);
+  });
+
+  it('the pass knows its seat and carries the map for the route; the door shows the seat', async () => {
+    const order = (await db.select().from(schema.ticketOrders).where(eq(schema.ticketOrders.eventId, eventId))).find((o) => o.status === 'paid')!;
+    const [t] = await db.select().from(schema.tickets).where(eq(schema.tickets.orderId, order.id));
+    const pass = await api.get(`/api/public/pass/${t.qrToken}`);
+    expect(pass.body).toMatchObject({ type: 'ticket', zoneKind: 'seated', ticketType: 'Stalls' });
+    expect(pass.body.map.seatId).toBe(t.seatId);
+    expect(pass.body.map.zones.some((z: any) => z.shape === 'entrance')).toBe(true);
+    expect(pass.body.map.seats.length).toBe(6);
+    await db.update(schema.events).set({ startsAt: new Date() }).where(eq(schema.events.id, eventId));
+    const scan = await api.post(`${v()}/checkin`, { token: t.qrToken });
+    expect(scan.body).toMatchObject({ ok: true, type: 'ticket' });
+    expect(scan.body.seat).toMatch(/^Row [AB], Seat \d$/);
+  });
+
+  it('a sold seat cannot be removed from the map', async () => {
+    const map = await api.get(`${v()}/events/${eventId}`);
+    const r = await api.put(`${v()}/events/${eventId}/map`, { zones: map.body.zones.map((z: any) => ({ id: z.id, name: z.name, kind: z.kind, shape: z.shape, price: z.price, x: z.x, y: z.y, w: z.w, h: z.h, meta: z.meta, seats: [] })) });
+    expect(r.status).toBe(409);
+    expect(r.body.message).toContain('Stalls · Row');
   });
 });

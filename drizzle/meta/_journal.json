@@ -43,6 +43,13 @@
       "when": 1795777676974,
       "tag": "0005_tickets_invites_soldout",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795779556385,
+      "tag": "0006_seat_blocks",
+      "breakpoints": true
     }
   ]
 }
