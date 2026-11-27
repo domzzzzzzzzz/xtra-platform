@@ -65,7 +65,7 @@ export async function loadPass(token: string): Promise<LoadedPass | null> {
       id: rg.p.id, qrToken: token, kind: 'booking', groupId: `${rg.v.id}_${rg.r.date.replace(/-/g, '')}`, venueId: rg.v.id,
       title: rg.v.name, subtitle: [area?.label, table ? `Table ${table.label}` : null, `${rg.r.partySize} ${rg.r.partySize === 1 ? 'guest' : 'guests'}`].filter(Boolean).join(' · '),
       holder: rg.p.name, startsAt: start, endsAt: end, venueName: rg.v.name, address: rg.v.address, lat: rg.v.mapLat, lng: rg.v.mapLng,
-      color: rg.v.settings.color, code: rg.r.code, place, ticketType: 'Booking', hasLogo: Boolean(rg.v.logoUrl),
+      color: rg.v.settings.color, code: rg.r.code, place, ticketType: 'Booking', hasLogo: Boolean(rg.v.logoUrl), hasHero: Boolean(rg.v.photoUrl),
       voided: VOID_BOOKING.includes(rg.r.status), passUrl: `${config.publicAppUrl}/p/${token}`,
     };
     // The floor map with the booked table, so the guest can see the way from the door.
@@ -241,6 +241,15 @@ export default async function passRoutes(app: FastifyInstance) {
       return b ? sharp(b).resize(560, 560, { fit: 'contain', background: '#ffffff' }).extend({ top: 50, bottom: 50, left: 50, right: 50, background: '#ffffff' }).flatten({ background: '#ffffff' }).png().toBuffer() : null;
     });
     if (!png) throw notFound('No logo');
+    return reply.type('image/png').header('Cache-Control', 'public, max-age=3600').send(png);
+  });
+  app.get<{ Params: { id: string } }>('/public/wallet/venue/:id.png', async (req, reply) => {
+    const [v] = await db.select({ photo: schema.venues.photoUrl }).from(schema.venues).where(eq(schema.venues.id, req.params.id));
+    const png = await cached(`gvenue:${v?.photo}`, async () => {
+      const b = await imageBytes(v?.photo);
+      return b ? sharp(b).resize(1032, 336, { fit: 'cover', position: 'attention' }).png().toBuffer() : null;
+    });
+    if (!png) throw notFound('No photo');
     return reply.type('image/png').header('Cache-Control', 'public, max-age=3600').send(png);
   });
   app.get<{ Params: { id: string } }>('/public/wallet/hero/:id.png', async (req, reply) => {

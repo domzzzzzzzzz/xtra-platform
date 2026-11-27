@@ -606,7 +606,10 @@ function vSetup(){
 }
 
 /* ---------- render ---------- */
-function render(){if(!GUEST&&S&&ME&&!NAV.some(n=>CAN(n[2]))){shell();$('#main').innerHTML='<div class="loading">Your role has no screens at this venue yet. Ask your manager to give it some.</div>';return}if(GUEST){const g=document.querySelector('#guest .gscroll'),st=g?.scrollTop;$('#guest').innerHTML=guestView();const g2=document.querySelector('#guest .gscroll');if(st&&g2)g2.scrollTop=st;return}if(!S||!ME)return;shell();const VW={floor:vFloor,bookings:vBookings,door:vDoor,orders:vOrders,guests:vGuests,page:vPage,setup:vSetup,editor:vEditor,events:vEvents,marketing:vMarketing,community:vCommunity,reports:vReports,messages:vMessages,admin:vAdmin}[VIEW];const gs=$('#gscroll')?.scrollTop;$('#main').innerHTML=VW();drawMap();if(gs&&$('#gscroll'))$('#gscroll').scrollTop=gs;if(S.sheet)openSheet(S.sheet,true)}
+const POWERED='<footer class="powered"><span>Powered by</span><img src="/web/brand/xtra-gray.png" alt="XTRA" width="45" height="10"></footer>';
+/** "Powered by XTRA" at the very bottom of every scrolling page (staff screens, guest screens, phone previews). */
+function powered(){document.querySelectorAll('#main,.gscroll').forEach(el=>{if(!el.querySelector(':scope>.powered'))el.insertAdjacentHTML('beforeend',POWERED)})}
+function render(){if(!GUEST&&S&&ME&&!NAV.some(n=>CAN(n[2]))){shell();$('#main').innerHTML='<div class="loading">Your role has no screens at this venue yet. Ask your manager to give it some.</div>';return}if(GUEST){const g=document.querySelector('#guest .gscroll'),st=g?.scrollTop;$('#guest').innerHTML=guestView();const g2=document.querySelector('#guest .gscroll');powered();if(st&&g2)g2.scrollTop=st;return}if(!S||!ME)return;shell();const VW={floor:vFloor,bookings:vBookings,door:vDoor,orders:vOrders,guests:vGuests,page:vPage,setup:vSetup,editor:vEditor,events:vEvents,marketing:vMarketing,community:vCommunity,reports:vReports,messages:vMessages,admin:vAdmin}[VIEW];const gs=$('#gscroll')?.scrollTop;$('#main').innerHTML=VW();powered();drawMap();if(gs&&$('#gscroll'))$('#gscroll').scrollTop=gs;if(S.sheet)openSheet(S.sheet,true)}
 
 /* ---------- sheets ---------- */
 function qrSVG(txt){try{const q=qrcode(0,'M');q.addData(txt);q.make();const n=q.getModuleCount();let p='';for(let r=0;r<n;r++)for(let c=0;c<n;c++)if(q.isDark(r,c))p+=`M${c} ${r}h1v1h-1z`;return `<svg viewBox="0 0 ${n} ${n}" shape-rendering="crispEdges"><path d="${p}" fill="#12153f"/></svg>`}catch(e){return `<div style="width:132px;height:132px;display:grid;place-items:center;color:#12153f;font-weight:800;line-height:1.2">${esc(txt)}</div>`}}
@@ -1462,7 +1465,7 @@ growthSheet=d=>{if(d.k==='newvenue')return ['New venue',`<form id="addvenue" cla
 
 /* ---------- staff boot ---------- */
 function loginScreen(){$('#app').hidden=true;$('#guest').hidden=true;const L=$('#login');L.hidden=false;
-  L.innerHTML=`<div class="login"><div class="card">${LOGO}<h1>Sign in</h1><p class="mute">Your venue's floor, bookings, door and tickets.</p><form id="slogin" class="stack"><label class="f">Email<input id="lemail" type="email" required autocomplete="username"></label><label class="f">Password<input id="lpass" type="password" required autocomplete="current-password"></label><p id="lerr" class="err" role="alert" style="margin:0"></p><button class="btn" type="submit">Sign in</button></form></div></div>`;
+  L.innerHTML=`<div class="login"><div class="card">${LOGO}<h1>Sign in</h1><p class="mute">Your venue's floor, bookings, door and tickets.</p><form id="slogin" class="stack"><label class="f">Email<input id="lemail" type="email" required autocomplete="username"></label><label class="f">Password<input id="lpass" type="password" required autocomplete="current-password"></label><p id="lerr" class="err" role="alert" style="margin:0"></p><button class="btn" type="submit">Sign in</button></form></div>${POWERED}</div>`;
   $('#lemail')?.focus()}
 function signOut(){TOKEN=null;store.set('xtra.staff',null);S=null;ME=null;closeCam();loginScreen()}
 async function bootStaff(){
