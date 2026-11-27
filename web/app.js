@@ -586,14 +586,16 @@ gpreset:()=>{S.gp=newGP();if(GUEST)history.replaceState(null,'','/book/'+PUB.slu
 
 /* ---------- setup ---------- */
 /* Daily report: a short morning summary of last night to the owner. */
-const DR=()=>{const d=CFG().dailyReport||VENUES[S.vi].raw.settings?.dailyReport||{};return {on:!!d.on,emails:d.emails||[],phones:d.phones||[]}};
+const DR=()=>{const d=CFG().dailyReport||VENUES[S.vi].raw.settings?.dailyReport||{};return {on:!!d.on,channel:d.channel||'both',emails:d.emails||[],phones:d.phones||[]}};
 const drSave=d=>{CFG().dailyReport=d;saveSettings({dailyReport:d},'dailyreport')};
-function drCard(){const d=DR();
-  return `<div class="bigbox"><div class="conn" style="padding-top:0"><div><h3>Morning report</h3><div class="mute" style="font-size:14px">Last night's money, bookings and tickets, sent at 10 AM. Quiet nights are skipped.</div></div><button class="toggle ${d.on?'on':''}" data-a="drtoggle" role="switch" aria-checked="${d.on}" aria-label="Morning report"></button></div>
-  <label class="f" style="margin-top:10px">Send to these emails<input data-dr="emails" value="${esc(d.emails.join(', '))}" placeholder="Leave empty to send to the venue owners" autocomplete="off" inputmode="email"></label>
-  <div class="f telf" style="margin-top:10px">WhatsApp number, optional${telField({bind:'data-dr="phone"',value:d.phones[0]||'',label:'WhatsApp number for the report'})}</div>
-  <p class="mute" style="font-size:13px;margin:6px 0 12px">WhatsApp starts once Meta approves the report message. Email works now.</p>
-  <button class="btn ghost sm" data-a="drtest">Send me last night's report now</button></div>`}
+function drCard(){const d=DR(),em=d.channel!=='whatsapp',wa=d.channel!=='email';
+  const head=`<div class="conn" style="padding-top:0"><div><h3>Morning report</h3><div class="mute" style="font-size:14px">${d.on?"Last night's money, bookings and tickets, sent at 10 AM. Quiet nights are skipped.":'Off. Switch it on to get last night\'s numbers every morning at 10.'}</div></div><button class="toggle ${d.on?'on':''}" data-a="drtoggle" role="switch" aria-checked="${d.on}" aria-label="Morning report"></button></div>`;
+  if(!d.on)return `<div class="bigbox">${head}</div>`;
+  return `<div class="bigbox">${head}
+  <div class="seg" role="radiogroup" aria-label="Send the report by" style="margin:12px 0 4px">${[['whatsapp','WhatsApp'],['email','Email'],['both','Both']].map(([k,l])=>`<button class="${d.channel===k?'on':''}" data-a="drch" data-v="${k}" role="radio" aria-checked="${d.channel===k}">${l}</button>`).join('')}</div>
+  ${em?`<label class="f" style="margin-top:10px">Send to these emails<input data-dr="emails" value="${esc(d.emails.join(', '))}" placeholder="Leave empty to send to the venue owners" autocomplete="off" inputmode="email"></label>`:''}
+  ${wa?`<div class="f telf" style="margin-top:10px">WhatsApp number${telField({bind:'data-dr="phone"',value:d.phones[0]||'',label:'WhatsApp number for the report'})}</div>${d.phones[0]?'':`<p class="mute" style="font-size:13px;margin:6px 0 0">Add a number, or nothing goes by WhatsApp.</p>`}`:''}
+  <button class="btn ghost sm" data-a="drtest" style="margin-top:12px">Send me last night's report now</button></div>`}
 function vSetup(){
   const c=CFG();
   const tg=(k,on,l,s)=>`<div class="conn"><div><b>${l}</b><div class="mute" style="font-size:14px">${s}</div></div><button class="toggle ${on?'on':''}" data-a="conn" data-v="${k}" role="switch" aria-checked="${on}" aria-label="${l}"></button></div>`;
@@ -1309,7 +1311,8 @@ csend:async()=>{const c=S.camp;if(c.busy)return;const n=reach(c.seg,c.ch).length
     return at?cp:POST(vurl(`/campaigns/${cp.id}/send`))},r=>at?`Scheduled for ${c.when}.`:`Sent to ${r.sentCount} guest${r.sentCount===1?'':'s'}.`);
   c.busy=false;if(r)closeSheet();else openSheet({k:'camp'},true)},
 drtoggle:()=>{const d=DR();d.on=!d.on;drSave(d);render()},
-drtest:async()=>{try{const r=await POST(vurl('/daily-report/test'),{});toast(r.emails?.length?`Sent to ${r.emails.join(', ')}.`:'No email to send to. Add one first.')}catch(e){toast(e.message)}},
+drch:v=>{const d=DR();d.channel=v;drSave(d);render()},
+drtest:async()=>{try{const r=await POST(vurl('/daily-report/test'),{});{const to=[...(r.emails||[]),...(r.phones||[])];toast(to.length?`Sent to ${to.join(', ')}.`:'Nowhere to send it yet. Add an email or a number first.')}}catch(e){toast(e.message)}},
 auto:v=>{const a=S.autos.find(x=>x.k===v);a.on=!a.on;CFG().autos[v]=a.on;saveSettings({automations:{...CFG().autos}},'autos');render()},
 tieradd:()=>{const T=tiers(),last=T[T.length-1];T.push({id:'new'+Date.now(),name:'New tier',min:(last?.min||0)+100000,perks:'',color:TIERCOL[T.length%TIERCOL.length]});render();saveTiers()},
 tierdel:v=>{tiers().splice(+v,1);render();saveTiers()},

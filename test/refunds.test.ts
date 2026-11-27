@@ -151,4 +151,15 @@ describe('Daily report', () => {
     const early = new Date(); early.setUTCHours(5, 0, 0, 0); // 7 AM Cairo
     expect(await runDailyReports(early)).toBe(0);
   });
+
+  it('goes only by the channel the venue picked', async () => {
+    await api.patch(v(), { settings: { dailyReport: { on: true, channel: 'email', emails: ['boss@lumen.eg'], phones: ['01000000001'] } } });
+    let t = await api.post(`${v()}/daily-report/test`, {});
+    expect(t.body.emails).toEqual(['boss@lumen.eg']);
+    expect(t.body.phones).toEqual([]);
+    await api.patch(v(), { settings: { dailyReport: { on: true, channel: 'whatsapp', emails: ['boss@lumen.eg'], phones: ['01000000001'] } } });
+    t = await api.post(`${v()}/daily-report/test`, {});
+    expect(t.body.emails).toEqual([]);
+    expect(await api.patch(v(), { settings: { dailyReport: { on: true, channel: 'sms', emails: [], phones: [] } } }).then((r) => r.status)).toBe(400);
+  });
 });
