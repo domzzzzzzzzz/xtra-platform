@@ -40,7 +40,7 @@ function bounds(layout){let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;layout.forEach(el=>{co
 function tiers(ev){const L=[];const add=(price,name,out)=>{let t=L.find(x=>x.price===price);if(!t){t={price,names:[],out:true};L.push(t)}if(!t.names.includes(name))t.names.push(name);if(!out)t.out=false};
   (ev.types||[]).forEach(t=>add(t.price,t.name,t.closed||t.left===0||t.sold>=t.qty));
   (ev.tz||[]).forEach(z=>{if(ev.layout.some(t=>isT(t)))add(z.price,z.name,z.closed)});
-  ev.layout.filter(b=>b.kind==='block').forEach(b=>add(b.price,b.name,b.closed));
+  ev.layout.filter(b=>b.kind==='block').forEach(b=>add(b.price,b.name,b.closed||b.left===0));
   L.sort((a,b)=>b.price-a.price);L.forEach((t,i)=>t.color=TIER[i%TIER.length]);return L}
 const colorOf=(T,price)=>(T.find(t=>t.price===price)||{color:TIER[TIER.length-1]}).color;
 
@@ -86,15 +86,24 @@ function blockSVG(b,o){const rows=blockRows(b),col=o.color,st=o.seatState||(()=>
     const lab=(p,q)=>{const dx=p.x-q.x,dy=p.y-q.y,L=Math.hypot(dx,dy)||1;return `<text x="${(p.x+dx/L*11).toFixed(1)}" y="${(p.y+dy/L*11+2.6).toFixed(1)}" text-anchor="middle" font-size="7" font-weight="700" fill="#8a90aa" ${NS}>${r.row}</text>`};
     s+=r.seats.length>1?lab(a,r.seats[1])+lab(z,r.seats[r.seats.length-2]):lab(a,{x:a.x+1,y:a.y})});
   const pick=o.pick&&!b.closed;
+  if(b.free&&!o.edit){const q=o.bcart?.[b.id]||0,out=!q&&(b.closed||b.left===0),tg=T&&T.block===b.id,bb=blockBox(b),cx=bb.x+bb.w/2,cy=bb.y+bb.h/2+6;
+    s=s.replace('<g class="smblock','<g '+(pick&&!out?`data-a="bq" data-v="${b.id}:1" role="button" aria-label="${esc(b.name)}, free seating, add one"`:'')+' class="smblock'+(pick&&!out?' smfree':''));
+    rows.forEach(r=>r.seats.forEach(p=>{s+=`<circle cx="${p.x}" cy="${p.y}" r="${R-.6}" fill="${out?'#d3d8e1':col}" opacity="${q||tg?.9:.42}"/>`}));
+    const w=Math.min(bb.w-8,150),lab=o.route?'Free seating':out?'Sold out':`Free seating · ${egp(b.price)}`;
+    s+=`<rect x="${cx-w/2}" y="${cy-15}" width="${w}" height="${q?40:30}" rx="9" fill="#fff" stroke="${col}" stroke-width="${q||tg?2:1}" opacity=".96"/><text x="${cx}" y="${cy+4}" text-anchor="middle" font-size="10.5" font-weight="800" fill="#12153f" ${NS}>${lab}</text>${q?`<text x="${cx}" y="${cy+18}" text-anchor="middle" font-size="9.5" font-weight="700" fill="#5b6280" ${NS}>${q} picked</text>`:''}`;
+    if(o.labels!==false)s+=`<text x="${cx}" y="${bb.y+9}" text-anchor="middle" font-size="10" font-weight="800" fill="#12153f" letter-spacing=".6" ${NS}>${esc(b.name.toUpperCase())}</text>`;
+    return s+'</g>'}
   rows.forEach(r=>r.seats.forEach(p=>{const id=b.seatIds?.[p.label],k=o.edit?'free':id?(mine.has(id)?'mine':st(id)):'gone';
     const tgt=T&&T.seat===id;
     if(k==='gone'&&!o.edit){s+=`<circle cx="${p.x}" cy="${p.y}" r="2" fill="#d7dbe3"/>`;return}
     const tip=`${b.name} · Row ${p.row}, Seat ${p.num}`;
-    if(k==='mine'||tgt)s+=`<g ${pick?`data-a="seat" data-v="${id}" class="sms"`:''} data-tip="${esc(tip)}"><circle cx="${p.x}" cy="${p.y}" r="${R+1.2}" fill="#12153f" stroke="#fff" stroke-width="1.4"/><text x="${p.x}" y="${p.y+2.3}" text-anchor="middle" font-size="6.2" font-weight="800" fill="#fff" ${NS}>${p.num}</text></g>`;
+    const act=o.seatAction||'seat';
+    if(k==='mine'||tgt)s+=`<g ${pick?`data-a="${act}" data-v="${id}" class="sms"`:''} data-tip="${esc(tip)}"><circle cx="${p.x}" cy="${p.y}" r="${R+1.2}" fill="#12153f" stroke="#fff" stroke-width="1.4"/><text x="${p.x}" y="${p.y+2.3}" text-anchor="middle" font-size="6.2" font-weight="800" fill="#fff" ${NS}>${p.num}</text></g>`;
     else if(k==='held')s+=`<circle cx="${p.x}" cy="${p.y}" r="${R-.6}" fill="#fff" stroke="#aeb5c4" stroke-width="1.3" stroke-dasharray="2 1.6" data-tip="${esc(tip)} · on hold"/>`;
     else if(k==='sold'||b.closed)s+=`<circle cx="${p.x}" cy="${p.y}" r="${R-1.3}" fill="#d3d8e1" data-tip="${esc(tip)} · sold"/>`;
-    else s+=`<circle cx="${p.x}" cy="${p.y}" r="${R}" fill="${col}" ${pick?`data-a="seat" data-v="${id}" class="sms"`:''} data-tip="${esc(tip)} · ${egp(b.price)}"/>`}));
+    else s+=`<circle cx="${p.x}" cy="${p.y}" r="${R}" fill="${col}" ${pick?`data-a="${act}" data-v="${id}" class="sms"`:''} data-tip="${esc(tip)} · ${egp(b.price)}"/>`}));
   const f=rows[0]?.seats,mid=f&&f[Math.floor(f.length/2)];
+  if(o.edit&&b.free){const bb=blockBox(b);s+=`<rect x="${bb.x+bb.w/2-44}" y="${bb.y+bb.h/2-10}" width="88" height="20" rx="7" fill="#fff" opacity=".95"/><text x="${bb.x+bb.w/2}" y="${bb.y+bb.h/2+4}" text-anchor="middle" font-size="10" font-weight="800" fill="#12153f" ${NS}>FREE SEATING</text>`}
   if(mid&&o.labels!==false){const bb=blockBox(b);s+=`<text x="${bb.x+bb.w/2}" y="${bb.y+9}" text-anchor="middle" font-size="10" font-weight="800" fill="#12153f" letter-spacing=".6" ${NS}>${esc(b.name.toUpperCase())}</text>`}
   if(T&&T.block===b.id&&T.seat){const p=rows.flatMap(r=>r.seats).find(p=>b.seatIds?.[p.label]===T.seat);if(p)s+=`<circle cx="${p.x}" cy="${p.y}" r="${R+5}" fill="none" stroke="#12153f" stroke-width="2" class="smpulse"/>`}
   return s+'</g>'}
@@ -118,7 +127,7 @@ function draw(ev,o={}){
   // Room pieces.
   L.forEach(f=>{if(f.kind==='stage')s+=wrapEl(edit,f,stageSVG(f,B,dim));else if(f.kind==='bar')s+=wrapEl(edit,f,barSVG(f,dim));else if(f.kind==='dj')s+=wrapEl(edit,f,djSVG(f,dim));else if(f.kind==='entrance')s+=wrapEl(edit,f,doorSVG(f,B))});
   // Seated blocks.
-  L.filter(e=>e.kind==='block').forEach(b=>s+=blockSVG(b,{color:b.closed?'#a9b0bf':route?'#b4bbcf':colorOf(T,b.price),seatState:o.seatState,mine:o.mine,pick,edit,target:o.target,dim}));
+  L.filter(e=>e.kind==='block').forEach(b=>s+=blockSVG(b,{color:b.closed?'#a9b0bf':route?(b.free&&o.target?.block===b.id?'#00a7c9':'#b4bbcf'):colorOf(T,b.price),seatState:o.seatState,mine:o.mine,pick,edit,target:o.target,dim,bcart:o.bcart,route,seatAction:o.seatAction}));
   // Tables.
   L.filter(isT).forEach(t=>{const zid=o.zoneOf?o.zoneOf(t):null,Z=(ev.tz||[]).find(z=>z.id===zid),c=Z&&Z.price!=null?colorOf(T,Z.price):'#8b93a8';
     const st=o.tableState?o.tableState(t):'free',mine=o.mine&&o.mine.has(t.id),tg=o.target&&o.target.table===t.id;
@@ -199,6 +208,9 @@ function route(ev,target){
     else if(el.kind==='block')blockRows(el).forEach(r=>{const S2=r.seats;if(S2.length===1)seg(S2[0],S2[0],R+.6);for(let i=1;i<S2.length;i++){const a=S2[i-1],b=S2[i];if(Math.hypot(b.x-a.x,b.y-a.y)>PITCH*1.4){seg(a,a,R+.6);seg(b,b,R+.6)}else seg(a,b,R+.6)}})});
   let goal,info={};
   if(target.seat){const b=L.find(x=>x.id===target.block),rows=b?blockRows(b):[];for(const r of rows){const k=r.seats.findIndex(p=>b.seatIds?.[p.label]===target.seat);if(k>=0){const p=r.seats[k];goal=[p.x,p.y];info={block:b,row:r,idx:k};seg(p,p,R+1.5,0);break}}}
+  else if(target.block){const b=L.find(x=>x.id===target.block);if(b){const rows=blockRows(b),r=rows[Math.floor(rows.length/2)].seats,d=L.find(x=>x.kind==='entrance'),dp=d?[d.x+d.w/2,d.y+d.h/2]:[B.x+B.w/2,B.y+B.h];
+    const end=(p,q)=>{const dx=p.x-q.x,dy=p.y-q.y,l=Math.hypot(dx,dy)||1;return [p.x+dx/l*PITCH*1.3,p.y+dy/l*PITCH*1.3]};
+    const ends=r.length>1?[end(r[0],r[1]),end(r[r.length-1],r[r.length-2])]:[[r[0].x,r[0].y+ROWGAP]];goal=ends.sort((a,c)=>Math.hypot(a[0]-dp[0],a[1]-dp[1])-Math.hypot(c[0]-dp[0],c[1]-dp[1]))[0];info={freeBlock:b}}}
   else if(target.table){const t=L.find(x=>x.id===target.table);if(t)goal=[t.x,t.y]}
   else if(target.type!=null){const z=L.find(x=>x.kind==='standing'&&x.type===target.type);if(z)goal=[z.x+z.w/2,z.y+z.h/2]}
   else if(target.area){const z=L.find(x=>x.kind==='zone'&&x.area===target.area);if(z)goal=[z.x+z.w/2,z.y+z.h/2]}
@@ -230,6 +242,7 @@ function steps(r,what){const s=[];if(!r)return s;const ord=n=>{const v=n%100;ret
   if(r.info.block){const {block:b,row,idx}=r.info,n=row.seats.length,pts=r.points,prev=pts[Math.max(0,pts.length-3)]||pts[0],a=row.seats[0],z=row.seats[n-1];
     const fromStart=Math.hypot(prev[0]-a.x,prev[1]-a.y)<=Math.hypot(prev[0]-z.x,prev[1]-z.y),k=fromStart?idx+1:n-idx;
     s.push(`Follow the line to <b>${esc(b.name)}</b>.`);s.push(`Go to <b>row ${esc(row.row)}</b> and walk in from the ${fromStart?'first':'last'} seat of the row.`);s.push(`Your seat is <b>${row.seats[idx].num}</b>, the ${ord(k)} seat in.`)}
+  else if(r.info.freeBlock)s.push(`Follow the line to <b>${esc(r.info.freeBlock.name)}</b>. It is free seating: take any empty seat in it.`);
   else if(what)s.push(what);
   return s}
 

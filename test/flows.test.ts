@@ -586,3 +586,60 @@ describe('seated sections, live holds and find-your-seat', () => {
     expect(r.body.message).toContain('Stalls · Row');
   });
 });
+
+describe('corporate events: invitation only, free seating and assigned seats', () => {
+  let eventId: string;
+  let vip: any;
+  let hall: any;
+
+  it('an invitation-only event sells nothing', async () => {
+    const e = await api.post(`${v()}/events`, { title: 'Bank Annual Meeting', startsAt: new Date(Date.now() + 6 * 86400_000).toISOString(), inviteOnly: true });
+    eventId = e.body.id;
+    expect(e.body.inviteOnly).toBe(true);
+    const seatsOf = (rows: string[], n: number) => rows.flatMap((r, ri) => Array.from({ length: n }, (_, i) => ({ label: `${r}-${i + 1}`, x: i * 14, y: ri * 17 })));
+    const map = await api.put(`${v()}/events/${eventId}/map`, { zones: [
+      { name: 'Entrance', kind: 'decor', shape: 'entrance', x: 0, y: 300, w: 60, h: 10 },
+      { name: 'VIP', kind: 'seated', price: 0, x: 0, y: 0, w: 60, h: 40, meta: { x: 30, y: 20, rows: 2, cols: 2 }, seats: seatsOf(['A', 'B'], 2) },
+      { name: 'Hall', kind: 'seated', price: 0, x: 0, y: 100, w: 60, h: 40, meta: { x: 30, y: 120, rows: 2, cols: 3, freeSeating: true }, seats: seatsOf(['C', 'D'], 3) },
+    ] });
+    vip = map.body.zones.find((z: any) => z.name === 'VIP');
+    hall = map.body.zones.find((z: any) => z.name === 'Hall');
+    expect(hall.left).toBe(6);
+    await api.patch(`${v()}/events/${eventId}`, { status: 'published' });
+    const pub = await api.get(`/api/public/events/${eventId}`);
+    expect(pub.body.event.inviteOnly).toBe(true);
+    const h = await api.post(`/api/public/events/${eventId}/hold`, { items: [{ zoneId: hall.id, qty: 1 }] });
+    expect(h.body.error).toBe('invite_only');
+  });
+
+  it('invites one person to a chosen VIP seat and two to free seating', async () => {
+    const seat = (await api.get(`${v()}/events/${eventId}`)).body.seats.find((s: any) => s.label === 'B-2');
+    const one = await api.post(`${v()}/events/${eventId}/invites`, { zoneId: vip.id, seatId: seat.id, firstName: 'Hany', email: 'hany@bank.eg', channels: ['email'] });
+    expect(one.status).toBe(201);
+    expect(one.body.place).toBe('VIP · Row B, Seat 2');
+    expect((await api.post(`${v()}/events/${eventId}/invites`, { zoneId: vip.id, seatId: seat.id, firstName: 'Late', email: 'l@bank.eg', channels: ['email'] })).body.error).toBe('seat_taken');
+    expect((await api.post(`${v()}/events/${eventId}/invites`, { zoneId: vip.id, firstName: 'No seat', email: 'n@bank.eg', channels: ['email'] })).body.error).toBe('seat_needed');
+    const free = await api.post(`${v()}/events/${eventId}/invites`, { zoneId: hall.id, qty: 2, firstName: 'Mai', email: 'mai@bank.eg', channels: ['email'] });
+    expect(free.body).toMatchObject({ tickets: 2, place: 'Hall · Free seating' });
+  });
+
+  it('invites a list: assigned seats go row by row, all or nothing', async () => {
+    const list = [{ firstName: 'A', email: 'a@bank.eg' }, { firstName: 'B', phone: '01011111111' }, { firstName: 'C', email: 'c@bank.eg' }];
+    const r = await api.post(`${v()}/events/${eventId}/invites/bulk`, { zoneId: vip.id, people: list });
+    expect(r.status).toBe(201);
+    // B-2 is taken already, so A-1, A-2, B-1.
+    expect(r.body.places).toEqual(['VIP · Row A, Seat 1', 'VIP · Row A, Seat 2', 'VIP · Row B, Seat 1']);
+    const tooMany = await api.post(`${v()}/events/${eventId}/invites/bulk`, { zoneId: hall.id, people: [1, 2, 3, 4, 5].map((i) => ({ firstName: 'P' + i, email: `p${i}@bank.eg` })) });
+    expect(tooMany.status).toBe(409);
+    const fits = await api.post(`${v()}/events/${eventId}/invites/bulk`, { zoneId: hall.id, people: [1, 2, 3, 4].map((i) => ({ firstName: 'P' + i, email: `p${i}@bank.eg` })) });
+    expect(fits.body.invited).toBe(4);
+    expect((await api.get(`${v()}/events/${eventId}`)).body.zones.find((z: any) => z.id === hall.id).left).toBe(0);
+  });
+
+  it('a free-seating pass shows the section and carries the map', async () => {
+    const [t] = await db.select().from(schema.tickets).where(eq(schema.tickets.zoneId, hall.id));
+    const pass = await api.get(`/api/public/pass/${t.qrToken}`);
+    expect(pass.body).toMatchObject({ type: 'ticket', zoneKind: 'seated', seat: null, ticketType: 'Hall' });
+    expect(pass.body.map.zoneId).toBe(hall.id);
+  });
+});

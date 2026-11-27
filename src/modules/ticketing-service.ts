@@ -53,6 +53,7 @@ export async function availability(c: Conn, eventId: string) {
       const zoneSeats = seats.filter((s) => s.zoneId === z.id && s.enabled);
       const used = lines.filter((l) => l.zoneId === z.id).reduce((s, l) => s + l.qty, 0);
       const left = z.kind === 'standing' ? Math.max(0, z.capacity - used)
+        : isFreeSeating(z) ? Math.max(0, zoneSeats.length - used)
         : z.kind === 'decor' ? 0 : zoneSeats.filter((s) => !takenSeats.has(s.id)).length;
       const closed = z.kind !== 'decor' && z.soldOut;
       return { ...z, markedSoldOut: closed, realLeft: left, left: closed ? 0 : left, soldOut: z.kind !== 'decor' && (closed || left === 0) };
@@ -63,6 +64,11 @@ export async function availability(c: Conn, eventId: string) {
     })),
   };
 }
+
+/** A seated section marked "free seating": guests sit anywhere in it, so it sells by count like standing. */
+export const isFreeSeating = (z: { kind: string; meta?: unknown }) => z.kind === 'seated' && Boolean((z.meta as { freeSeating?: boolean } | null)?.freeSeating);
+/** Zones sold by count (no seat picked). */
+export const byCount = (z: { kind: string; meta?: unknown }) => z.kind === 'standing' || isFreeSeating(z);
 
 /** A table zone is priced per seat and sold one whole table at a time. */
 const tableSeats = (z: Zone, seat: { seats: number } | null) => (z.kind === 'table' && seat ? Math.max(1, seat.seats) : 1);
@@ -80,6 +86,7 @@ type Line = { zoneId: string; seatId: string | null; qty: number; unitPrice: num
 async function linesFor(tx: Conn, eventId: string, items: z.infer<typeof holdInput>['items']) {
   const [event] = await tx.select().from(schema.events).where(eq(schema.events.id, eventId)).for('update');
   if (!event || event.status !== 'published') throw notFound('Event not found');
+  if (event.inviteOnly) throw badRequest('This event is by invitation only', 'invite_only');
   if (event.startsAt.getTime() + 6 * 3600_000 < Date.now()) throw badRequest('Sales for this event are closed', 'sales_closed');
   await expireHolds(tx, eventId);
   const av = await availability(tx, eventId);
@@ -93,7 +100,7 @@ async function linesFor(tx: Conn, eventId: string, items: z.infer<typeof holdInp
     if (!zone || zone.kind === 'decor') throw badRequest('Unknown ticket type');
     if (zone.markedSoldOut) throw conflict(`${zone.name} is sold out`, 'sold_out');
     if ('qty' in it) {
-      if (zone.kind !== 'standing') throw badRequest(`Pick a seat or table in ${zone.name}`);
+      if (!byCount(zone)) throw badRequest(`Pick a seat or table in ${zone.name}`);
       want.set(zone.id, (want.get(zone.id) ?? 0) + it.qty);
       if (want.get(zone.id)! > zone.left) throw conflict(zone.left ? `Only ${zone.left} left in ${zone.name}` : `${zone.name} is sold out`, 'sold_out');
       lines.push({ zoneId: zone.id, seatId: null, qty: it.qty, unitPrice: zone.price });
@@ -160,7 +167,7 @@ export async function changeHold(code: string, input: z.infer<typeof changeHoldI
 
 /** How a seat reads for a guest: "Table A3", "Row F, Seat 12", or the zone name for standing. */
 export function placeOf(kind: string, zoneName: string, seatLabel: string | null | undefined) {
-  if (!seatLabel) return zoneName;
+  if (!seatLabel) return kind === 'seated' && zoneName ? `${zoneName} · Free seating` : zoneName;
   if (kind === 'table') return zoneName ? `${zoneName} · Table ${seatLabel}` : `Table ${seatLabel}`;
   const [row, num] = seatLabel.split('-');
   const s = num ? `Row ${row}, Seat ${num}` : `Seat ${seatLabel}`;

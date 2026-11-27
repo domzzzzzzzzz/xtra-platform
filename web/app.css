@@ -761,3 +761,9 @@ video.cam{width:100%;border-radius:16px;background:#05061a;aspect-ratio:1;object
 .fsteps{margin:0;padding:0;list-style:none;counter-reset:fs;display:flex;flex-direction:column;gap:8px;font-size:14px}
 .fsteps li{counter-increment:fs;display:grid;grid-template-columns:24px 1fr;gap:10px;align-items:start}
 .fsteps li::before{content:counter(fs);width:24px;height:24px;border-radius:50%;background:#00a7c9;color:#fff;font-weight:800;font-size:12px;display:grid;place-items:center}
+.invonly{display:flex;flex-direction:column;gap:2px;background:#12153f;color:#fff;border-radius:14px;padding:12px 16px;text-align:left;flex:1}
+.invonly b{font-size:16px;font-weight:800}
+.invonly span{font-size:13px;opacity:.8}
+.invseat{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px;font-size:14px}
+#sheet .smap{aspect-ratio:1.4!important}
+.smap .smfree{cursor:pointer}
