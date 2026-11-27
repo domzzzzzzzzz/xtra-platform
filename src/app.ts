@@ -14,6 +14,7 @@ import reservations from './modules/reservations.js';
 import tabs from './modules/tabs.js';
 import ticketing from './modules/ticketing.js';
 import publicRoutes from './modules/public.js';
+import passRoutes from './modules/passes.js';
 import crm from './modules/crm.js';
 import payments from './modules/payments.js';
 import automations from './modules/automations.js';
@@ -45,7 +46,7 @@ export async function buildApp(opts: FastifyServerOptions = {}) {
   app.get('/health', async () => ({ ok: true }));
 
   await app.register(async (api) => {
-    for (const m of [auth, admin, venues, reservations, tabs, ticketing, publicRoutes, crm, automations, media, reports, inbox]) await api.register(m);
+    for (const m of [auth, admin, venues, reservations, tabs, ticketing, publicRoutes, passRoutes, crm, automations, media, reports, inbox]) await api.register(m);
   }, { prefix: '/api' });
   await app.register(payments);
   await app.register(mediaFiles);

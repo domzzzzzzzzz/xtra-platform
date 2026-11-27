@@ -7,12 +7,12 @@ import { guestUser, parse } from '../lib/http.js';
 import { conflict, notFound } from '../lib/errors.js';
 import { byNight, nightOf, weekdayOf } from '../lib/dates.js';
 import { qrPng } from '../integrations/qr.js';
-import { googleWalletUrl, applePass, applePkpass, appleWalletReady, type PassInfo } from '../integrations/wallet.js';
+import { applePass, applePkpass, appleWalletReady, googleWalletLink, googleWalletReady } from '../integrations/wallet.js';
+import { appleImages, livePass } from './passes.js';
 import { config } from '../config.js';
 import { acceptReservation, bookingInput, createBooking, statusUrl } from './reservations.js';
 import { startPayment } from './payments.js';
 import { tierFor } from './guests-service.js';
-import { placeOf } from './ticketing-service.js';
 
 async function venueBySlug(slug: string, feature?: string) {
   const [v] = await db.select().from(schema.venues).where(and(eq(schema.venues.slug, slug), eq(schema.venues.active, true)));
@@ -119,65 +119,17 @@ export default async function publicRoutes(app: FastifyInstance) {
     });
   });
 
-  /** A booking guest's pass or a ticket, by its QR token, with what the wallets need. */
-  async function passByToken(token: string) {
-    const [rg] = await db.select({ p: schema.reservationGuests, r: schema.reservations, v: schema.venues }).from(schema.reservationGuests)
-      .innerJoin(schema.reservations, eq(schema.reservations.id, schema.reservationGuests.reservationId))
-      .innerJoin(schema.venues, eq(schema.venues.id, schema.reservations.venueId)).where(eq(schema.reservationGuests.qrToken, token));
-    if (rg && ['confirmed', 'arrived', 'completed'].includes(rg.r.status)) {
-      const info: PassInfo = {
-        id: rg.p.id, qrToken: token, kind: 'booking', groupId: rg.v.id, title: rg.v.name, subtitle: `${rg.r.partySize} people · ${rg.r.slotLabel ?? ''}`.replace(/ · $/, ''),
-        holder: rg.p.name, startsAt: new Date(`${rg.r.date}T20:00:00+02:00`), venueName: rg.v.name, address: rg.v.address, lat: rg.v.mapLat, lng: rg.v.mapLng, color: rg.v.settings.color,
-      };
-      // The floor map with the booked table, so the guest can see the way from the door.
-      let map = null;
-      if (rg.r.tableId) {
-        const items = await db.select().from(schema.floorItems).where(eq(schema.floorItems.venueId, rg.v.id));
-        const table = items.find((i) => i.id === rg.r.tableId);
-        if (table) map = {
-          items: items.map((i) => ({ id: i.id, kind: i.kind, label: i.label, shape: i.shape, x: i.x, y: i.y, w: i.w, h: i.h, rotation: i.rotation, seats: i.seats, zoneId: i.zoneId, parentId: i.parentId, enabled: i.enabled })),
-          tableId: table.id, table: table.label, area: items.find((i) => i.id === table.zoneId)?.label ?? null,
-        };
-      }
-      return { info, view: { type: 'booking', name: rg.p.name, venue: rg.v.name, date: rg.r.date, time: rg.r.slotLabel, used: Boolean(rg.p.checkedInAt), map } };
-    }
-    const [t] = await db.select({ t: schema.tickets, o: schema.ticketOrders, e: schema.events, z: schema.eventZones, s: schema.eventSeats, v: schema.venues }).from(schema.tickets)
-      .innerJoin(schema.ticketOrders, eq(schema.ticketOrders.id, schema.tickets.orderId))
-      .innerJoin(schema.events, eq(schema.events.id, schema.tickets.eventId))
-      .innerJoin(schema.venues, eq(schema.venues.id, schema.events.venueId))
-      .innerJoin(schema.eventZones, eq(schema.eventZones.id, schema.tickets.zoneId))
-      .leftJoin(schema.eventSeats, eq(schema.eventSeats.id, schema.tickets.seatId))
-      .where(eq(schema.tickets.qrToken, token));
-    if (t && t.o.status === 'paid') {
-      const holder = `${t.t.firstName} ${t.t.lastName}`.trim();
-      const info: PassInfo = {
-        id: t.t.id, qrToken: token, kind: 'ticket', groupId: t.e.id, title: t.e.title, subtitle: t.s ? `${t.z.name} · ${t.s.label}` : t.z.name, holder,
-        startsAt: t.e.startsAt, venueName: t.v.name, address: t.v.address, lat: t.v.mapLat, lng: t.v.mapLng, color: t.e.color ?? t.v.settings.color,
-      };
-      // The event map with this ticket's seat, table or zone, for the "find your seat" route.
-      const zones = await db.select().from(schema.eventZones).where(eq(schema.eventZones.eventId, t.e.id));
-      const seats = await db.select({ id: schema.eventSeats.id, zoneId: schema.eventSeats.zoneId, label: schema.eventSeats.label, x: schema.eventSeats.x, y: schema.eventSeats.y, seats: schema.eventSeats.seats, shape: schema.eventSeats.shape, rotation: schema.eventSeats.rotation })
-        .from(schema.eventSeats).where(eq(schema.eventSeats.eventId, t.e.id));
-      const map = t.e.seatMap ? {
-        zones: zones.map((z) => ({ id: z.id, name: z.name, kind: z.kind, shape: z.shape, x: z.x, y: z.y, w: z.w, h: z.h, color: z.color, meta: z.meta, sort: z.sort })),
-        seats, zoneId: t.z.id, seatId: t.t.seatId,
-      } : null;
-      return { info, view: { type: 'ticket', name: holder, event: t.e.title, posterUrl: t.e.posterUrl, venue: t.v.name, startsAt: t.e.startsAt, ticketType: t.z.name, zoneKind: t.z.kind, seat: t.s?.label ?? null, place: placeOf(t.z.kind, '', t.s?.label), used: Boolean(t.t.checkedInAt), map } };
-    }
-    throw notFound('Pass not found');
-  }
-
   app.get<{ Params: { token: string } }>('/public/pass/:token', async (req) => {
-    const { info, view } = await passByToken(req.params.token);
-    return { ...view, qrImage: `${config.publicAppUrl}/public/qr/${req.params.token}.png`, googleWalletUrl: googleWalletUrl(info), appleWallet: applePass(info) };
+    const { info, view } = await livePass(req.params.token);
+    return { ...view, qrImage: `${config.publicAppUrl}/public/qr/${req.params.token}.png`, googleWalletUrl: googleWalletReady() ? googleWalletLink(info.qrToken) : null, appleWallet: applePass(info) };
   });
 
   /** The signed Apple Wallet pass. */
   app.get<{ Params: { token: string } }>('/public/pass/:token/apple.pkpass', async (req, reply) => {
     if (!appleWalletReady()) throw notFound('Apple Wallet is not set up yet');
-    const { info } = await passByToken(req.params.token);
-    const buf = await applePkpass(info);
-    return reply.type('application/vnd.apple.pkpass').header('Content-Disposition', `attachment; filename="${info.kind}.pkpass"`).header('Cache-Control', 'no-store').send(buf);
+    const p = await livePass(req.params.token);
+    const buf = await applePkpass(p.info, await appleImages(p));
+    return reply.type('application/vnd.apple.pkpass').header('Content-Disposition', `attachment; filename="${p.info.kind}.pkpass"`).header('Cache-Control', 'no-store').send(buf);
   });
 
   app.get<{ Params: { token: string } }>('/public/qr/:token.png', async (req, reply) => {

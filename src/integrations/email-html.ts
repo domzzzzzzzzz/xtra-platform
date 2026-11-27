@@ -17,6 +17,9 @@ export type EmailVenue = {
   color?: string | null;
 };
 
+/** "Add to Apple Wallet" / "Add to Google Wallet" links under a QR, when the wallets are set up. */
+export type WalletLinks = { apple?: string | null; google?: string | null };
+
 export type EmailDoc = {
   venue: EmailVenue;
   /** Grey line shown next to the subject in the inbox. */
@@ -26,7 +29,7 @@ export type EmailDoc = {
   rows?: [label: string, value: string][];
   button?: { label: string; url: string };
   /** QR images, each with a caption (one per ticket or pass). */
-  qrs?: { token: string; caption: string; url?: string }[];
+  qrs?: { token: string; caption: string; url?: string; wallet?: WalletLinks }[];
   /** Receipt lines under the details; the last one is shown bold as the total. */
   receipt?: [label: string, value: string][];
   note?: string;
@@ -43,6 +46,15 @@ const absolute = (u?: string | null) => {
 };
 
 const brand = (c?: string | null) => (c && /^#[0-9a-f]{6}$/i.test(c) ? c : '#12153f');
+
+/** Two black wallet buttons, side by side (stacked on narrow screens by the client). */
+function walletButtons(w?: WalletLinks) {
+  const links = [w?.apple && ['Add to Apple Wallet', w.apple], w?.google && ['Add to Google Wallet', w.google]].filter(Boolean) as [string, string][];
+  if (!links.length) return '';
+  const cell = ([label, url]: [string, string]) => `<td style="padding:4px"><table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background:#000000;border-radius:9px">
+            <a href="${esc(url)}" style="display:inline-block;padding:10px 16px;color:#ffffff;font-size:13px;font-weight:600;text-decoration:none;white-space:nowrap">${esc(label)}</a></td></tr></table></td>`;
+  return `<table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:12px"><tr>${links.map(cell).join('')}</tr></table>`;
+}
 
 export function renderEmail(d: EmailDoc): string {
   const color = brand(d.venue.color);
@@ -61,6 +73,7 @@ export function renderEmail(d: EmailDoc): string {
           <a href="${esc(q.url ?? '#')}" style="text-decoration:none"><img src="${config.publicAppUrl}/api/public/qr/${encodeURIComponent(q.token)}.png" width="180" height="180" alt="QR code" style="display:block;border:0;width:180px;height:180px;border-radius:8px;background:#ffffff"></a>
           <div style="padding-top:8px;color:#12153f;font-size:14px;font-weight:600">${esc(q.caption)}</div>
           <div style="color:#8a90ab;font-size:12px;letter-spacing:1px">${esc(q.token.slice(0, 8).toUpperCase())}</div>
+          ${walletButtons(q.wallet)}
         </td></tr>`).join('');
   const directions = d.venue.mapUrl ? ` · <a href="${esc(d.venue.mapUrl)}" style="color:#6b7190">Directions</a>` : '';
   const app = config.publicAppUrl;
@@ -108,7 +121,11 @@ export function renderText(d: EmailDoc): string {
   for (const [k, v] of d.rows ?? []) out.push(`${k}: ${v}`);
   if (d.receipt?.length) { out.push(''); for (const [k, v] of d.receipt) out.push(`${k}: ${v}`); }
   if (d.button) out.push('', `${d.button.label}: ${d.button.url}`);
-  for (const q of d.qrs ?? []) if (q.url) out.push(`${q.caption}: ${q.url}`);
+  for (const q of d.qrs ?? []) {
+    if (q.url) out.push(`${q.caption}: ${q.url}`);
+    if (q.wallet?.apple) out.push(`  Add to Apple Wallet: ${q.wallet.apple}`);
+    if (q.wallet?.google) out.push(`  Add to Google Wallet: ${q.wallet.google}`);
+  }
   if (d.note) out.push('', d.note);
   out.push('', `${d.venue.name}${d.venue.address ? `, ${d.venue.address}` : ''}`);
   if (d.unsubscribeUrl) out.push(`Unsubscribe: ${d.unsubscribeUrl}`);

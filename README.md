@@ -91,11 +91,10 @@ All under `/api`. Staff send `Authorization: Bearer <token>` from `/auth/login`.
 | WhatsApp Business (Meta Cloud API) | Booking updates, passes, tickets, campaigns | `WHATSAPP_*` |
 | Resend (or any email API) | Emails | `RESEND_API_KEY`, `EMAIL_FROM` |
 | Google Wallet issuer | "Add to Google Wallet" | `GOOGLE_WALLET_*` |
-| Apple Developer (Pass Type ID) | "Add to Apple Wallet" (.pkpass signing, not built yet) | later |
+| Apple Developer (Pass Type ID) | "Add to Apple Wallet" | `APPLE_PASS_P12`, `APPLE_PASS_P12_PASSWORD` |
 
 ## Next
 
-- Apple Wallet `.pkpass` signing once the Apple certificate exists.
 - Paymob split payouts to each venue's sub-account.
 - Hosting (e.g. Railway / Render / AWS Bahrain) and a real domain for guest links.
 
@@ -107,13 +106,13 @@ All under `/api`. Staff send `Authorization: Bearer <token>` from `/auth/login`.
 
 ## Wallet passes
 
-Both wallets are built and switch on by themselves once their env vars are set. Until then guests get their QR by WhatsApp/email and on the pass page.
+Booking passes, tickets and invitations can be added to Apple Wallet and Google Wallet. Each wallet switches on by itself once its env vars are set (step by step: `docs/wallet-setup.md`). Until then guests get their QR by WhatsApp/email and on the pass page.
 
-- **Apple Wallet** (needs an Apple Developer account, 99 USD a year): create a Pass Type ID (e.g. `pass.com.xtratickets.hospitality`), make its certificate, export it, and set
-  `APPLE_PASS_TYPE_ID`, `APPLE_TEAM_ID`, `APPLE_PASS_CERT` (PEM), `APPLE_PASS_KEY` (PEM), `APPLE_PASS_KEY_PASSPHRASE` (if any) and `APPLE_WWDR_CERT` (Apple WWDR G4, PEM). PEM values can use `\n` for new lines.
-  Guests download `GET /api/public/pass/:token/apple.pkpass`.
-- **Google Wallet**: in the Google Pay & Wallet Console get an Issuer ID, create a Google Cloud service account with the Wallet API enabled, add it as a user of the issuer, and set
-  `GOOGLE_WALLET_ISSUER_ID`, `GOOGLE_WALLET_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_WALLET_PRIVATE_KEY`. The save link carries the pass class, so nothing else needs creating.
+- The pass carries the venue's name, logo and colour, the event poster (Apple strip / Google hero), date and time, the QR, and the place: Section / Row / Seat, Section / Table, Free seating, or Area / Table / Party for bookings.
+- Buttons: on the pass page (`/p/:token`, `/t/:token`) and under every QR in pass, reminder, ticket and invitation emails. Links: `GET /api/public/pass/:token/apple.pkpass` and `GET /api/public/pass/:token/google` (redirects to a freshly signed Save link).
+- Updates: when a booking's table changes, a booking is cancelled or marked no-show, an invitation is cancelled, an event's name/time/poster/colour/status changes, a seat map edit renames a sold seat's section or label, or the venue's name/logo/colour/address changes, saved passes update. Apple: phones register at `/api/wallet/apple/v1/...` (Apple's pass web service, needs https) and get an APNs push; Google: the saved pass is patched through the Wallet REST API. Cancelled passes show as void / inactive.
+- **Apple**: `APPLE_PASS_P12` (the .p12 exported from Keychain, base64) and `APPLE_PASS_P12_PASSWORD`. The Pass Type ID and Team ID are read from the certificate (`APPLE_PASS_TYPE_ID` / `APPLE_TEAM_ID` override). PEM instead of .p12 also works: `APPLE_PASS_CERT`, `APPLE_PASS_KEY`, `APPLE_PASS_KEY_PASSPHRASE`. The Apple WWDR G4 certificate is downloaded from Apple on first use (`APPLE_WWDR_CERT` overrides).
+- **Google**: `GOOGLE_WALLET_ISSUER_ID`, `GOOGLE_WALLET_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_WALLET_PRIVATE_KEY` (from the service account JSON key; `\n` escapes allowed). The Save link carries the pass class, so nothing else needs creating in the console.
 
 ## Reports
 

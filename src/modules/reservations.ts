@@ -11,6 +11,7 @@ import * as M from './guest-messages.js';
 import { config } from '../config.js';
 import { upsertGuest, ensureVenueGuest, recordSpend } from './guests-service.js';
 import { placeOf } from './ticketing-service.js';
+import { passTokens, walletChanged } from './passes.js';
 
 type Venue = typeof schema.venues.$inferSelect;
 type Reservation = typeof schema.reservations.$inferSelect;
@@ -270,6 +271,7 @@ export default async function reservations(app: FastifyInstance) {
       await recordSpend(db, req.params.venueId, r.guestId, 0, r.id, 'visit', true);
     } else if (tableId !== r.tableId) {
       [r] = await db.update(schema.reservations).set({ tableId }).where(eq(schema.reservations.id, r.id)).returning();
+      walletChanged(passTokens.reservation(r.id));
     }
     const [open] = await db.select().from(schema.tabs).where(and(eq(schema.tabs.reservationId, r.id), eq(schema.tabs.status, 'open')));
     const tab = open ?? (await db.insert(schema.tabs).values({
@@ -322,6 +324,7 @@ export default async function reservations(app: FastifyInstance) {
     const r = await loadRes(req.params.venueId, req.params.id);
     if (b.tableId) await checkTable(req.params.venueId, b.tableId, r);
     const [u] = await db.update(schema.reservations).set({ tableId: b.tableId }).where(eq(schema.reservations.id, r.id)).returning();
+    if (u.tableId !== r.tableId) walletChanged(passTokens.reservation(r.id));
     return u;
   });
 
@@ -331,6 +334,8 @@ export default async function reservations(app: FastifyInstance) {
       const r = await loadRes(req.params.venueId, req.params.id);
       if (['declined', 'cancelled', 'completed', 'no_show'].includes(r.status)) throw conflict('This booking is already closed');
       const [u] = await db.update(schema.reservations).set({ status }).where(eq(schema.reservations.id, r.id)).returning();
+      // Cancelled or no-show: saved wallet passes show as no longer valid.
+      if (status !== 'completed') walletChanged(passTokens.reservation(r.id));
       if (status === 'cancelled') {
         const venue = await venueOf(r.venueId), g = await bookerOf(u);
         await tell(venue, { ...g, guestId: g.id }, M.bookingCancelled(venue, g, u));
