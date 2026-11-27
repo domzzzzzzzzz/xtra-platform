@@ -437,7 +437,7 @@ const pubEL=id=>PUB.layout.find(e=>e.id===id);
 const pubSlot=id=>(PUB.days[PDAYS[S.gp.day][3]]?.slots||[]).find(s=>s.id===id);
 const slotTxt=s=>s?`${t12(hm2min(s.from))} to ${t12(hm2min(s.to))}`:'';
 function ensurePub(){const slug=GUEST?GUEST.slug:VENUES[S.vi].slug;
-  if(!PUB||PUB.slug!==slug){if(!ensurePub.busy){ensurePub.busy=loadPub(slug).then(()=>{ensurePub.busy=null;render()}).catch(e=>{ensurePub.busy=null;toast(e.message)})}return false}
+  if(!PUB||PUB.slug!==slug){if(!ensurePub.busy){ensurePub.busy=loadPub(slug).then(()=>{ensurePub.busy=null;render()}).catch(e=>{ensurePub.busy=null;if(GUEST&&e.status===404){GUEST.err='This venue page does not exist. Check the link with the venue.';render()}else toast(e.message)})}return false}
   const d=PDAYS[S.gp.day][3];if(!PUB.days[d]){PUB.days[d]={loading:true};pubGet(`/venues/${slug}/slots?date=${d}`).then(r=>{PUB.days[d]=r;render()}).catch(e=>toast(e.message));return false}
   return !PUB.days[d].loading}
 function wsteps(){const a=[{k:'main',t:'Your booking'}];if(S.gp.party>1&&PUB.info.askNames)a.push({k:'guests',t:'Your guests'});a.push({k:'review',t:'Review and send'});return a}
@@ -1152,7 +1152,7 @@ async function bootGuest(path){
     if(GUEST.kind==='order'){const o=await pubGet(`/orders/${a}`);GUEST.order=o;GUEST.eventId=o.eventId;loadPubEvent(o.eventId).then(render).catch(()=>{});
       if(o.status==='held'){const tick=async()=>{try{GUEST.order=await pubGet(`/orders/${a}`);render();if(GUEST.order.status==='held')setTimeout(tick,3000)}catch(_){}};setTimeout(tick,3000)}}
     if(GUEST.kind==='pass'){GUEST.pass=await pubGet(`/pass/${a}`)}
-  }catch(e){GUEST.err=e.status===404?'This link is not valid any more.':e.message}
+  }catch(e){GUEST.err=e.status===404||e.status===400?'This link is not valid any more.':e.message}
   render()}
 
 
