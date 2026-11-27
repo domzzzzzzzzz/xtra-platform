@@ -43,6 +43,9 @@ export const config = {
     key: (env.APPLE_PASS_KEY ?? '').replace(/\\n/g, '\n'),
     keyPassphrase: env.APPLE_PASS_KEY_PASSPHRASE ?? '',
     wwdr: (env.APPLE_WWDR_CERT ?? '').replace(/\\n/g, '\n'),
+    /** Or simply the .p12 exported from Keychain (base64) and its password. */
+    p12: env.APPLE_PASS_P12 ?? '',
+    p12Password: env.APPLE_PASS_P12_PASSWORD ?? '',
   },
   holdMinutes: 10,
 };

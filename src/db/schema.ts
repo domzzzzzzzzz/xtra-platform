@@ -578,3 +578,25 @@ export const media = pgTable('media', {
   bytes: bytea('bytes').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/* ---------------------------------------------------------------- wallet passes */
+
+/**
+ * Phones that added a pass to Apple Wallet. Apple calls our web service to
+ * register, and we push to `pushToken` when the pass changes. `serial` is the
+ * pass's QR token.
+ */
+export const walletDevices = pgTable('wallet_devices', {
+  id: id(),
+  deviceId: text('device_id').notNull(),
+  pushToken: text('push_token').notNull(),
+  passTypeId: text('pass_type_id').notNull(),
+  serial: text('serial').notNull(),
+  createdAt: createdAt(),
+}, (t) => [uniqueIndex('wallet_devices_uq').on(t.deviceId, t.passTypeId, t.serial), index('wallet_devices_serial_idx').on(t.serial)]);
+
+/** When a pass last changed (booking moved, cancelled, event edited), for wallet updates. */
+export const walletPassUpdates = pgTable('wallet_pass_updates', {
+  serial: text('serial').primaryKey(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});

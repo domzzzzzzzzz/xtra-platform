@@ -8,6 +8,7 @@ import { parse, venueAccess, MANAGERS } from '../lib/http.js';
 import { badRequest, conflict, notFound } from '../lib/errors.js';
 import { PERMS, PRESETS } from '../lib/access.js';
 import { imageRef, pinFromMapUrl } from './media.js';
+import { passTokens, walletChanged } from './passes.js';
 
 type P = { venueId: string };
 
@@ -78,6 +79,8 @@ export default async function venues(app: FastifyInstance) {
     const [cur] = await db.select({ settings: schema.venues.settings }).from(schema.venues).where(eq(schema.venues.id, req.params.venueId));
     const [v] = await db.update(schema.venues).set({ ...rest, ...(settings ? { settings: { ...cur?.settings, ...settings } } : {}) })
       .where(eq(schema.venues.id, req.params.venueId)).returning();
+    // Name, logo, colour or address show on wallet passes: update upcoming ones.
+    if (b.name !== undefined || b.logoUrl !== undefined || b.address !== undefined || b.mapUrl !== undefined || settings?.color !== undefined) walletChanged(passTokens.venue(v.id));
     return v;
   });
 

@@ -8,7 +8,8 @@ import { config } from '../config.js';
 import { prettyDate } from '../lib/dates.js';
 import { egp } from '../lib/http.js';
 import { emailParts, type VenueLike, type WaTemplate } from '../integrations/notify.js';
-import type { EmailDoc } from '../integrations/email-html.js';
+import type { EmailDoc, WalletLinks } from '../integrations/email-html.js';
+import { appleWalletLink, appleWalletReady, googleWalletLink, googleWalletReady } from '../integrations/wallet.js';
 
 type Res = { code: string; date: string; slotLabel: string; partySize: number; depositAmount: number; depositPaidAt?: Date | null; minSpend?: number };
 type Person = { id?: string; firstName: string };
@@ -16,6 +17,11 @@ type Doc = Omit<EmailDoc, 'venue'>;
 export type GuestMessage = { kind: string; subject: string; body: string; wa?: WaTemplate; mail: { venue: VenueLike; doc: Doc } };
 
 const app = () => config.publicAppUrl;
+/** Wallet buttons for one pass, only for the wallets that are set up. */
+const walletFor = (token: string): WalletLinks | undefined => {
+  const w = { apple: appleWalletReady() ? appleWalletLink(token) : null, google: googleWalletReady() ? googleWalletLink(token) : null };
+  return w.apple || w.google ? w : undefined;
+};
 const statusPath = (code: string) => `b/${code}`;
 const bookPath = (slug: string) => `book/${slug}`;
 
@@ -138,7 +144,7 @@ export function bookingPass(v: VenueLike, p: { name: string; qrToken: string }, 
       preheader: `${date} at ${time}. Show this QR at the door.`, title: `You're on the list, ${first}.`,
       intro: 'Show this QR at the door. It is yours only and works once.',
       rows: [['Date', date], ['Time', time]],
-      qrs: [{ token: p.qrToken, caption: p.name, url }],
+      qrs: [{ token: p.qrToken, caption: p.name, url, wallet: walletFor(p.qrToken) }],
       button: { label: 'Open my pass', url },
     } },
   };
@@ -153,7 +159,7 @@ export function bookingReminder(v: VenueLike, g: Person, r: Res, passToken: stri
     mail: { venue: v, doc: {
       preheader: `Tonight at ${time}. Your pass is inside.`, title: `See you tonight, ${g.firstName}.`,
       intro: `Your table is ready for ${time}. Please arrive within 30 minutes of your time.`,
-      rows: bookingRows(r), qrs: [{ token: passToken, caption: 'Your pass', url }],
+      rows: bookingRows(r), qrs: [{ token: passToken, caption: 'Your pass', url, wallet: walletFor(passToken) }],
       button: { label: 'Directions', url: v.mapUrl || url },
     } },
   };
@@ -203,7 +209,7 @@ export function ticketOrderEmail(
         preheader: `${v.name} invited you. ${event}, ${when}.`, title: `You're invited to ${event}.`,
         intro: `Hi ${buyer}, ${v.name} has invited you${n > 1 ? ` and ${n - 1} ${n === 2 ? 'guest' : 'guests'}` : ''}. ${n === 1 ? 'Your ticket is' : 'Your tickets are'} below, free of charge. Each QR lets one person in once.${invite.note ? ` A note from ${v.name}: "${invite.note}"` : ''}`,
         rows: [['Event', event], ['When', when], ['Venue', v.name], ['Invitation', o.code]],
-        qrs: tickets.map((t) => ({ token: t.qrToken, caption: `${t.name} · ${t.type}`, url: `${app()}/t/${t.qrToken}` })),
+        qrs: tickets.map((t) => ({ token: t.qrToken, caption: `${t.name} · ${t.type}`, url: `${app()}/t/${t.qrToken}`, wallet: walletFor(t.qrToken) })),
         note: 'Screenshots work too. The venue may ask for an ID at the door.',
       } },
     };
@@ -221,7 +227,7 @@ export function ticketOrderEmail(
       intro: `Hi ${buyer}, here ${n === 1 ? 'is your ticket' : `are your ${n} tickets`}. Each QR lets one person in once, so share each one with its guest.`,
       rows: [['Event', event], ['When', when], ['Venue', v.name], ['Order', o.code]],
       receipt,
-      qrs: tickets.map((t) => ({ token: t.qrToken, caption: `${t.name} · ${t.type}`, url: `${app()}/t/${t.qrToken}` })),
+      qrs: tickets.map((t) => ({ token: t.qrToken, caption: `${t.name} · ${t.type}`, url: `${app()}/t/${t.qrToken}`, wallet: walletFor(t.qrToken) })),
       note: 'Screenshots work too. The venue may ask for an ID at the door.',
     } },
   };

@@ -57,6 +57,13 @@
       "when": 1795781027386,
       "tag": "0007_invite_only",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1795783413972,
+      "tag": "0008_wallet_updates",
+      "breakpoints": true
     }
   ]
 }

@@ -4,12 +4,16 @@ import type { FastifyInstance } from 'fastify';
 import { db, pool, schema } from '../src/db/index.js';
 import { nightOf } from '../src/lib/dates.js';
 import { paymobHmac } from '../src/integrations/paymob.js';
-import { freshApp, client, tomorrow } from './helpers.js';
+import crypto from 'node:crypto';
+import { config } from '../src/config.js';
+import { appleAuthToken } from '../src/integrations/wallet.js';
+import { freshApp, client, tomorrow, fakeAppleCerts } from './helpers.js';
 
 let app: FastifyInstance;
 let api: ReturnType<typeof client>;
 let venueId: string;
 let ownerToken: string;
+let ticketToken = '';
 const v = () => `/api/venues/${venueId}`;
 
 beforeAll(async () => {
@@ -264,6 +268,46 @@ describe('ticketing', () => {
     expect((await api.post(`${v()}/checkin`, { token })).body.reason).toBe('wrong_night');
     await db.update(schema.events).set({ startsAt: new Date() }).where(eq(schema.events.id, eventId));
     expect((await api.post(`${v()}/checkin`, { token })).body).toMatchObject({ ok: true, type: 'ticket', name: 'Lina Fahmy' });
+    ticketToken = token;
+  });
+
+  it('wallets: Google link and Apple pass with the table, and the Apple update service', async () => {
+    const { privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+    Object.assign(config.googleWallet, { issuerId: '3388000000012345678', serviceAccountEmail: 'w@x.iam.gserviceaccount.com', privateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString() });
+    Object.assign(config.appleWallet, { passTypeId: 'pass.eg.xtra.test', teamId: 'ABCDE12345', ...fakeAppleCerts() });
+    try {
+      const pass = await api.get(`/api/public/pass/${ticketToken}`);
+      expect(pass.body).toMatchObject({ googleWalletUrl: `http://test.local/api/public/pass/${ticketToken}/google`, appleWallet: { configured: true } });
+      const g = await app.inject({ url: `/api/public/pass/${ticketToken}/google` });
+      expect(g.statusCode).toBe(302);
+      const jwt = JSON.parse(Buffer.from(g.headers.location!.toString().split('/').pop()!.split('.')[1], 'base64url').toString());
+      expect(jwt.payload.eventTicketClasses[0]).toMatchObject({ issuerName: 'Lumen Rooftop' });
+      expect(jwt.payload.eventTicketObjects[0]).toMatchObject({ ticketHolderName: 'Lina Fahmy', ticketNumber: expect.any(String) });
+      expect(jwt.payload.eventTicketObjects[0].textModulesData).toEqual(expect.arrayContaining([{ id: 'table', header: 'Table', body: 'A2' }]));
+      const pk = await app.inject({ url: `/api/public/pass/${ticketToken}/apple.pkpass` });
+      expect(pk.headers['content-type']).toBe('application/vnd.apple.pkpass');
+
+      // An iPhone registers for updates, asks what changed, downloads the pass, unregisters.
+      const dev = `/api/wallet/apple/v1/devices/dev1/registrations/pass.eg.xtra.test`;
+      const auth = { authorization: `ApplePass ${appleAuthToken(ticketToken)}` };
+      const reg = (headers: Record<string, string>) => app.inject({ method: 'POST', url: `${dev}/${ticketToken}`, headers, payload: { pushToken: 'ab'.repeat(32) } });
+      expect((await reg({ authorization: 'ApplePass wrong' })).statusCode).toBe(401);
+      expect((await reg(auth)).statusCode).toBe(201);
+      expect((await reg(auth)).statusCode).toBe(200);
+      const list = await app.inject({ url: dev });
+      expect(list.json().serialNumbers).toEqual([ticketToken]);
+      expect((await app.inject({ url: `${dev}?passesUpdatedSince=${list.json().lastUpdated}` })).statusCode).toBe(204);
+      await db.insert(schema.walletPassUpdates).values({ serial: ticketToken, updatedAt: new Date(Date.now() + 5000) });
+      expect((await app.inject({ url: `${dev}?passesUpdatedSince=${list.json().lastUpdated}` })).json().serialNumbers).toEqual([ticketToken]);
+      const latest = await app.inject({ url: `/api/wallet/apple/v1/passes/pass.eg.xtra.test/${ticketToken}`, headers: auth });
+      expect(latest.statusCode).toBe(200);
+      expect((await app.inject({ url: `/api/wallet/apple/v1/passes/pass.eg.xtra.test/${ticketToken}`, headers: { ...auth, 'if-modified-since': latest.headers['last-modified'] as string } })).statusCode).toBe(304);
+      expect((await app.inject({ method: 'DELETE', url: `${dev}/${ticketToken}`, headers: auth })).statusCode).toBe(200);
+      expect((await app.inject({ url: dev })).statusCode).toBe(204);
+    } finally {
+      Object.assign(config.googleWallet, { issuerId: '', serviceAccountEmail: '', privateKey: '' });
+      Object.assign(config.appleWallet, { passTypeId: '', teamId: '', cert: '', key: '', wwdr: '' });
+    }
   });
 });
 

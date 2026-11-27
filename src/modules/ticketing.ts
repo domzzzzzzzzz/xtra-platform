@@ -8,6 +8,7 @@ import { normalizePhone, promoCode, qrToken, shortCode, slugify } from '../lib/c
 import { config } from '../config.js';
 import { startPayment } from './payments.js';
 import { imageRef } from './media.js';
+import { passTokens, walletChanged } from './passes.js';
 import {
   availability, applyPromo, byCount, changeHold, changeHoldInput, checkoutInput, expireHolds, feeRatesFor, hold, holdInput, onTicketsPaid, orderByCode, placeOf, prepareCheckout, sendTickets,
 } from './ticketing-service.js';
@@ -62,6 +63,15 @@ async function eventMap(eventId: string) {
   return { zones: av.zones.sort((a, b) => a.sort - b.sort), seats: av.seats };
 }
 
+/** Each sold ticket's section and seat label, to spot which passes a map edit changed. */
+async function ticketPlaces(eventId: string) {
+  const rows = await db.select({ q: schema.tickets.qrToken, zone: schema.eventZones.name, seat: schema.eventSeats.label }).from(schema.tickets)
+    .innerJoin(schema.eventZones, eq(schema.eventZones.id, schema.tickets.zoneId))
+    .leftJoin(schema.eventSeats, eq(schema.eventSeats.id, schema.tickets.seatId))
+    .where(eq(schema.tickets.eventId, eventId));
+  return new Map(rows.map((r) => [r.q, `${r.zone}|${r.seat ?? ''}`]));
+}
+
 export default async function ticketing(app: FastifyInstance) {
   /* ================= staff ================= */
 
@@ -114,6 +124,8 @@ export default async function ticketing(app: FastifyInstance) {
       if (!zones.some((z) => z.kind !== 'decor')) throw badRequest('Add at least one ticket type before publishing', 'no_tickets');
     }
     const [e] = await db.update(schema.events).set(b).where(eq(schema.events.id, req.params.eventId)).returning();
+    // New name, time, poster or colour: update the tickets already in wallets.
+    if (['title', 'startsAt', 'endsAt', 'posterUrl', 'color', 'status'].some((k) => k in b)) walletChanged(passTokens.event(e.id));
     return e;
   });
 
@@ -122,6 +134,7 @@ export default async function ticketing(app: FastifyInstance) {
     await venueAccess(req, req.params.venueId, MANAGERS);
     const e = await loadEvent(req.params.venueId, req.params.eventId);
     const { zones } = parse(z.object({ zones: z.array(zoneBody).max(200) }), req.body);
+    const before = await ticketPlaces(e.id);
     await db.transaction(async (tx) => {
       const sold = await tx.select({ zoneId: schema.ticketOrderLines.zoneId, seatId: schema.ticketOrderLines.seatId }).from(schema.ticketOrderLines)
         .innerJoin(schema.ticketOrders, eq(schema.ticketOrders.id, schema.ticketOrderLines.orderId))
@@ -163,6 +176,9 @@ export default async function ticketing(app: FastifyInstance) {
         }
       }
     });
+    // A renamed section or relabelled seat: update the tickets already in wallets.
+    const after = await ticketPlaces(e.id);
+    walletChanged([...after].filter(([q, place]) => before.get(q) !== place).map(([q]) => q));
     return eventMap(e.id);
   });
 
@@ -363,6 +379,7 @@ export default async function ticketing(app: FastifyInstance) {
     const [o] = await db.update(schema.ticketOrders).set({ status: 'cancelled' })
       .where(and(eq(schema.ticketOrders.id, parse(z.string().uuid(), req.params.orderId)), eq(schema.ticketOrders.eventId, e.id), eq(schema.ticketOrders.kind, 'invite'), eq(schema.ticketOrders.status, 'paid'))).returning();
     if (!o) throw notFound('Invitation not found');
+    walletChanged(passTokens.order(o.id));
     return { cancelled: true };
   });
 
