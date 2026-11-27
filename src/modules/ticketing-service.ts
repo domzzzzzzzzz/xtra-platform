@@ -8,6 +8,7 @@ import { config } from '../config.js';
 import { emailParts, send } from '../integrations/notify.js';
 import { ticketOrderEmail, ticketWa } from './guest-messages.js';
 import { getPlatformSettings } from './admin.js';
+import { markWaitlistBought } from './waitlist.js';
 import { upsertGuest, ensureVenueGuest, recordSpend } from './guests-service.js';
 
 type Order = typeof schema.ticketOrders.$inferSelect;
@@ -282,6 +283,7 @@ export async function onTicketsPaid(orderId: string) {
   const [o] = await db.update(schema.ticketOrders).set({ status: 'paid', paidAt: new Date() })
     .where(and(eq(schema.ticketOrders.id, orderId), inArray(schema.ticketOrders.status, ['held', 'expired']))).returning();
   if (!o) return;
+  await markWaitlistBought(o.eventId, o.buyerPhone);
   await sendTickets(o);
 }
 

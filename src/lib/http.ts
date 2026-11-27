@@ -78,6 +78,6 @@ export async function venueAccess(req: FastifyRequest, venueId: string, roles: R
 }
 
 export const egp = (piastres: number) =>
-  `EGP ${(piastres / 100).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+  `EGP ${(piastres / 100).toLocaleString('en-US', { minimumFractionDigits: piastres % 100 ? 2 : 0, maximumFractionDigits: 2 })}`;
 
 export const uuidParam = z.string().uuid();

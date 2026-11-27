@@ -1,6 +1,5 @@
 /**
- * Automatic messages a venue can switch on in Marketing:
- *  - remind:  WhatsApp/email 3 hours before a confirmed booking, with the pass link
+ * Offer messages a venue can switch on in Marketing (all off until switched on):
  *  - thanks:  the day after a visit, from 2 PM
  *  - bday:    7 days before a guest's birthday (only guests who opted in)
  *  - winback: 45 days after the last visit (only guests who opted in)
@@ -14,10 +13,11 @@ import { notifyGuest } from '../integrations/notify.js';
 import * as M from './guest-messages.js';
 import { localDate, nightOf } from '../lib/dates.js';
 import { MANAGERS, venueAccess } from '../lib/http.js';
+import { runDailyReports } from './daily-report.js';
 
-export const AUTOMATIONS = ['remind', 'thanks', 'bday', 'winback'] as const;
+export const AUTOMATIONS = ['thanks', 'bday', 'winback'] as const;
 type Auto = (typeof AUTOMATIONS)[number];
-const DEFAULTS: Record<Auto, boolean> = { remind: true, thanks: true, bday: true, winback: false };
+const DEFAULTS: Record<Auto, boolean> = { thanks: false, bday: false, winback: false };
 
 const isOn = (v: typeof schema.venues.$inferSelect, k: Auto) => v.settings?.automations?.[k] ?? DEFAULTS[k];
 
@@ -43,26 +43,7 @@ export async function runAutomations(now = new Date()) {
   const venues = await db.select().from(schema.venues).where(eq(schema.venues.active, true));
   let sent = 0;
   for (const v of venues) {
-    const ch = v.notifyChannel;
-
-    if (isOn(v, 'remind')) {
-      const tonight = nightOf(now);
-      let nowMin = cairoMinutes(now);
-      if (nowMin < 6 * 60) nowMin += 1440;
-      const rows = await db.select({ r: schema.reservations, g: schema.guests }).from(schema.reservations)
-        .innerJoin(schema.guests, eq(schema.guests.id, schema.reservations.guestId))
-        .where(and(eq(schema.reservations.venueId, v.id), eq(schema.reservations.date, tonight), eq(schema.reservations.status, 'confirmed')));
-      for (const { r, g } of rows) {
-        const start = slotStart(r.slotLabel);
-        if (start - nowMin > 180 || start - nowMin < 0) continue;
-        const kind = `auto:remind:${r.id}`;
-        if (await alreadySent(kind)) continue;
-        const [p] = await db.select({ t: schema.reservationGuests.qrToken }).from(schema.reservationGuests)
-          .where(and(eq(schema.reservationGuests.reservationId, r.id), eq(schema.reservationGuests.isBooker, true)));
-        await notifyGuest({ channel: ch, phone: g.phone, email: g.email, venueId: v.id, guestId: g.id, ...M.bookingReminder(v, g, r, p?.t ?? ''), kind });
-        sent++;
-      }
-    }
+    const ch = 'both' as const;
 
     if (isOn(v, 'thanks') && cairoMinutes(now) >= 14 * 60) {
       const yesterday = localDate(new Date(now.getTime() - 86400_000));
@@ -109,7 +90,7 @@ export async function runAutomations(now = new Date()) {
 
 /** Checks every 10 minutes. */
 export function startAutomations() {
-  const t = setInterval(() => { runAutomations().catch(() => {}); }, 10 * 60_000);
+  const t = setInterval(() => { runAutomations().catch(() => {}); runDailyReports().catch(() => {}); }, 10 * 60_000);
   t.unref();
   return t;
 }

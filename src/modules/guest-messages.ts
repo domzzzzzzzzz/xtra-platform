@@ -56,79 +56,66 @@ export function bookingReceived(v: VenueLike, g: Person, r: Res): GuestMessage {
   };
 }
 
-export function bookingAccepted(v: VenueLike, g: Person, r: Res): GuestMessage {
-  const date = prettyDate(r.date), time = prettyTime(r.slotLabel);
-  if (r.depositAmount > 0 && !r.depositPaidAt) {
-    const dep = egp(r.depositAmount);
-    return {
-      kind: 'booking_accepted', subject: `Pay your deposit to confirm · ${v.name} · ${date}`,
-      body: `Hi ${g.firstName}, ${v.name} accepted your booking for ${date}. Pay the ${dep} deposit to confirm your table. It comes off your bill on the night: ${app()}/${statusPath(r.code)}`,
-      wa: { name: 'xtra_booking_deposit', header: v.name, params: [g.firstName, date, dep], button: statusPath(r.code) },
-      mail: { venue: v, doc: {
-        preheader: `Pay ${dep} to confirm your table for ${date}.`, title: 'Your table is waiting.',
-        intro: `Good news, ${g.firstName}. ${v.name} accepted your booking. Pay the deposit to confirm it. The full amount comes off your bill on the night.`,
-        rows: bookingRows(r, [['Deposit', dep]]), button: { label: `Pay ${dep}`, url: `${app()}/${statusPath(r.code)}` },
-        note: 'Cancel at least 24 hours before your booking and you get the deposit back.',
-      } },
-    };
-  }
-  return {
-    kind: 'booking_accepted', subject: `Booking confirmed · ${v.name} · ${date}`,
-    body: `Hi ${g.firstName}, your booking at ${v.name} is confirmed for ${date} at ${time}, ${guests(r.partySize)}. Please arrive within 30 minutes of your time: ${app()}/${statusPath(r.code)}`,
-    wa: { name: 'xtra_booking_accepted', header: v.name, params: [g.firstName, date, time, String(r.partySize)], button: statusPath(r.code) },
-    mail: { venue: v, doc: {
-      preheader: `${date} at ${time}, ${guests(r.partySize)}.`, title: `You're booked, ${g.firstName}.`,
-      intro: 'Please arrive within 30 minutes of your time. Each guest gets their own pass for the door.',
-      rows: bookingRows(r), button: { label: 'View my booking', url: `${app()}/${statusPath(r.code)}` },
-    } },
-  };
-}
-
-export function depositPaid(v: VenueLike, g: Person, r: Res): GuestMessage {
+/** Accepted, with a deposit to pay before the table is confirmed. */
+export function depositDue(v: VenueLike, g: Person, r: Res): GuestMessage {
   const date = prettyDate(r.date), dep = egp(r.depositAmount);
   return {
-    kind: 'deposit_paid', subject: `Deposit received · ${v.name} · ${date}`,
-    body: `Hi ${g.firstName}, we received your ${dep} deposit. Your booking at ${v.name} for ${date} is confirmed. Booking code ${r.code}.`,
-    wa: { name: 'xtra_deposit_paid', header: v.name, params: [g.firstName, dep, date, r.code], button: statusPath(r.code) },
+    kind: 'booking_accepted', subject: `Pay your deposit to confirm · ${v.name} · ${date}`,
+    body: `Hi ${g.firstName}, ${v.name} accepted your booking for ${date}. Pay the ${dep} deposit to confirm your table. It comes off your bill on the night: ${app()}/${statusPath(r.code)}`,
+    wa: { name: 'xtra_booking_deposit', header: v.name, params: [g.firstName, date, dep], button: statusPath(r.code) },
     mail: { venue: v, doc: {
-      preheader: `Your table for ${date} is confirmed.`, title: 'Deposit received. You are confirmed.',
-      intro: `Thank you, ${g.firstName}. Your deposit is paid and your table is confirmed. It comes off your bill on the night.`,
-      rows: bookingRows(r),
-      receipt: [['Deposit', dep], ['Paid', dep]],
-      button: { label: 'View my booking', url: `${app()}/${statusPath(r.code)}` },
-      note: 'Your guest passes are on their way. Cancel at least 24 hours before your booking and you get the deposit back.',
+      preheader: `Pay ${dep} to confirm your table for ${date}.`, title: 'Your table is waiting.',
+      intro: `Good news, ${g.firstName}. ${v.name} accepted your booking. Pay the deposit to confirm it. The full amount comes off your bill on the night.`,
+      rows: bookingRows(r, [['Deposit', dep]]), button: { label: `Pay ${dep}`, url: `${app()}/${statusPath(r.code)}` },
+      note: 'Cancel at least 24 hours before your booking and you get the deposit back.',
     } },
   };
 }
 
-export function bookingDeclined(v: VenueLike & { slug: string }, g: Person, r: Res, reason?: string | null): GuestMessage {
+/**
+ * The booking is off: the venue declined the request or cancelled it. One
+ * message for both, with what happens to any deposit.
+ */
+export function bookingCancelled(v: VenueLike & { slug: string }, g: Person, r: Res, x: { declined?: boolean; reason?: string | null } = {}): GuestMessage {
   const date = prettyDate(r.date);
-  return {
-    kind: 'booking_declined', subject: `About your booking · ${v.name} · ${date}`,
-    body: `Hi ${g.firstName}, we are sorry, ${v.name} cannot take your booking for ${date}.${reason ? ` ${reason}` : ''} You can choose another date here: ${app()}/${bookPath(v.slug)}`,
-    wa: { name: 'xtra_booking_declined', header: v.name, params: [g.firstName, date], button: bookPath(v.slug) },
-    mail: { venue: v, doc: {
-      preheader: `We could not take your booking for ${date}.`, title: 'We could not take this booking.',
-      intro: `Sorry, ${g.firstName}. ${v.name} cannot take your booking for ${date}.${reason ? ` ${reason}` : ''} We would love to host you another night.`,
-      button: { label: 'Pick another night', url: `${app()}/${bookPath(v.slug)}` },
-    } },
-  };
-}
-
-export function bookingCancelled(v: VenueLike & { slug: string }, g: Person, r: Res): GuestMessage {
-  const date = prettyDate(r.date);
-  const refund = r.depositPaidAt && r.depositAmount > 0
+  const why = x.declined ? `${v.name} cannot take your booking on this night.${x.reason ? ` ${x.reason}` : ''}` : '';
+  const money = r.depositPaidAt && r.depositAmount > 0
     ? `Your ${egp(r.depositAmount)} deposit will be refunded to your card within 7 days.`
     : 'No payment was taken.';
+  const line = [why, money].filter(Boolean).join(' ');
   return {
-    kind: 'booking_cancelled', subject: `Booking cancelled · ${v.name} · ${date}`,
-    body: `Hi ${g.firstName}, your booking at ${v.name} for ${date} has been cancelled. ${refund}`,
-    wa: { name: 'xtra_booking_cancelled', header: v.name, params: [g.firstName, date, refund], button: bookPath(v.slug) },
+    kind: x.declined ? 'booking_declined' : 'booking_cancelled', subject: `${x.declined ? 'About your booking' : 'Booking cancelled'} · ${v.name} · ${date}`,
+    body: `Hi ${g.firstName}, your booking at ${v.name} for ${date} has been cancelled. ${line}`,
+    wa: { name: 'xtra_booking_cancelled', header: v.name, params: [g.firstName, date, line], button: bookPath(v.slug) },
     mail: { venue: v, doc: {
-      preheader: refund, title: 'Your booking is cancelled.',
-      intro: `Hi ${g.firstName}, your booking at ${v.name} for ${date} has been cancelled. ${refund}`,
+      preheader: x.declined ? `We could not take your booking for ${date}.` : money,
+      title: x.declined ? 'We could not take this booking.' : 'Your booking is cancelled.',
+      intro: `Hi ${g.firstName}, ${x.declined ? `sorry, ${why} We would love to host you another night.` : `your booking at ${v.name} for ${date} has been cancelled.`} ${money}`,
       rows: bookingRows(r), button: { label: 'Book another night', url: `${app()}/${bookPath(v.slug)}` },
       note: 'Questions? Just reply to this email.',
+    } },
+  };
+}
+
+/**
+ * The booker's one message once the table is confirmed: the booking, their own
+ * pass with its QR, and the deposit receipt when one was paid.
+ */
+export function bookingConfirmed(v: VenueLike, g: Person, r: Res, pass: { name: string; qrToken: string }): GuestMessage {
+  const date = prettyDate(r.date), time = prettyTime(r.slotLabel), url = `${app()}/p/${pass.qrToken}`;
+  const dep = r.depositPaidAt && r.depositAmount > 0 ? egp(r.depositAmount) : null;
+  return {
+    kind: 'booking_confirmed', subject: `You're booked · ${v.name} · ${date}`,
+    body: `Hi ${g.firstName}, your booking at ${v.name} is confirmed for ${date} at ${time}, ${guests(r.partySize)}.${dep ? ` We received your ${dep} deposit, it comes off your bill.` : ''} Your pass for the door: ${url}`,
+    wa: { name: 'xtra_booking_pass', header: v.name, params: [g.firstName, date, time], button: `p/${pass.qrToken}` },
+    mail: { venue: v, doc: {
+      preheader: `${date} at ${time}, ${guests(r.partySize)}. Your pass is inside.`, title: `You're booked, ${g.firstName}.`,
+      intro: `Please arrive within 30 minutes of your time and show this QR at the door.${r.partySize > 1 ? ' Guests you added with a phone or email get their own pass.' : ''}`,
+      rows: bookingRows(r),
+      ...(dep ? { receipt: [['Deposit', dep], ['Paid', dep]] as [string, string][] } : {}),
+      qrs: [{ token: pass.qrToken, caption: pass.name, url, wallet: walletFor(pass.qrToken) }],
+      button: { label: 'View my booking', url: `${app()}/${statusPath(r.code)}` },
+      note: dep ? 'The deposit comes off your bill on the night. Cancel at least 24 hours before and you get it back.' : undefined,
     } },
   };
 }
@@ -146,21 +133,6 @@ export function bookingPass(v: VenueLike, p: { name: string; qrToken: string }, 
       rows: [['Date', date], ['Time', time]],
       qrs: [{ token: p.qrToken, caption: p.name, url, wallet: walletFor(p.qrToken) }],
       button: { label: 'Open my pass', url },
-    } },
-  };
-}
-
-export function bookingReminder(v: VenueLike, g: Person, r: Res, passToken: string): GuestMessage {
-  const time = prettyTime(r.slotLabel), url = `${app()}/p/${passToken}`;
-  return {
-    kind: 'booking_reminder', subject: `See you tonight · ${v.name} · ${time}`,
-    body: `Hi ${g.firstName}, this is a reminder of your booking tonight at ${v.name} at ${time}. Please have your entry pass ready at the door: ${url}`,
-    wa: { name: 'xtra_booking_reminder', header: v.name, params: [g.firstName, time], button: `p/${passToken}` },
-    mail: { venue: v, doc: {
-      preheader: `Tonight at ${time}. Your pass is inside.`, title: `See you tonight, ${g.firstName}.`,
-      intro: `Your table is ready for ${time}. Please arrive within 30 minutes of your time.`,
-      rows: bookingRows(r), qrs: [{ token: passToken, caption: 'Your pass', url, wallet: walletFor(passToken) }],
-      button: { label: 'Directions', url: v.mapUrl || url },
     } },
   };
 }
@@ -229,6 +201,62 @@ export function ticketOrderEmail(
       receipt,
       qrs: tickets.map((t) => ({ token: t.qrToken, caption: `${t.name} · ${t.type}`, url: `${app()}/t/${t.qrToken}`, wallet: walletFor(t.qrToken) })),
       note: 'Screenshots work too. The venue may ask for an ID at the door.',
+    } },
+  };
+}
+
+/** Money back on a ticket order or a deposit. */
+export function refundDone(v: VenueLike, g: Person, x: { what: string; amount: number; code: string; method: 'paymob' | 'manual' }): GuestMessage {
+  const amount = egp(x.amount);
+  const how = x.method === 'paymob'
+    ? 'It goes back to the card or wallet you paid with. Banks usually show it within 5 to 14 days.'
+    : `${v.name} will give it back to you directly.`;
+  return {
+    kind: 'refund', subject: `Refund of ${amount} · ${v.name}`,
+    body: `Hi ${g.firstName}, ${v.name} refunded ${amount} for your ${x.what} (${x.code}). ${how}`,
+    wa: { name: 'xtra_refund', header: v.name, params: [g.firstName, amount, x.what, x.code] },
+    mail: { venue: v, doc: {
+      preheader: `${amount} is on its way back to you.`, title: `We refunded ${amount}.`,
+      intro: `Hi ${g.firstName}, ${v.name} refunded your ${x.what}. ${how}`,
+      rows: [['Refund', amount], ['For', x.what], ['Reference', x.code]],
+      note: x.what.includes('ticket') ? 'The QR codes of this order no longer work at the door.' : 'Questions? Just reply to this email.',
+    } },
+  };
+}
+
+/** A place opened up for a guest on an event's waitlist. */
+export function waitlistOpen(v: VenueLike, g: Person, x: { event: string; when: string; eventId: string; type?: string | null }): GuestMessage {
+  const url = `${app()}/e/${x.eventId}`;
+  const what = x.type ? `${x.type} tickets for ${x.event}` : `tickets for ${x.event}`;
+  return {
+    kind: 'waitlist_open', subject: `Tickets are available again · ${x.event}`,
+    body: `Hi ${g.firstName}, good news: ${what} at ${v.name}, ${x.when}, are available again. They go to whoever books first: ${url}`,
+    wa: { name: 'xtra_waitlist_open', header: v.name, params: [g.firstName, x.event, x.when], button: `e/${x.eventId}` },
+    mail: { venue: v, doc: {
+      preheader: `A place opened up for ${x.event}.`, title: 'A place just opened up.',
+      intro: `Hi ${g.firstName}, you were on the waitlist and ${what}, ${x.when}, are available again. They go to whoever books first, so be quick.`,
+      button: { label: 'Get tickets', url },
+      note: 'You got this because you joined the waitlist. We only tell you once.',
+    } },
+  };
+}
+
+/** Email only: what the guest paid at the venue, line by line. */
+export function billReceipt(v: VenueLike, g: Person, t: { id: string; paidAt: Date | null; total: number; service: number; vat: number; minSpendTopUp: number; depositCredit: number; subtotal: number; payMethod: string | null },
+  items: { name: string; qty: number; unitPrice: number }[], when: string): GuestMessage {
+  const receipt: [string, string][] = items.map((i) => [`${i.qty} × ${i.name}`, egp(i.qty * i.unitPrice)]);
+  if (t.minSpendTopUp) receipt.push(['Minimum spend top-up', egp(t.minSpendTopUp)]);
+  if (t.service) receipt.push(['Service', egp(t.service)]);
+  if (t.vat) receipt.push(['VAT', egp(t.vat)]);
+  if (t.depositCredit) receipt.push(['Deposit paid before', `- ${egp(t.depositCredit)}`]);
+  receipt.push(['Total paid', egp(t.total)]);
+  return {
+    kind: `receipt:${t.id}`, subject: `Your receipt · ${v.name} · ${when}`,
+    body: `Hi ${g.firstName}, thank you for coming to ${v.name}. You paid ${egp(t.total)}.`,
+    mail: { venue: v, doc: {
+      preheader: `You paid ${egp(t.total)}. Thank you for coming.`, title: `Thank you, ${g.firstName}.`,
+      intro: `Here is your receipt from ${v.name}, ${when}.`, receipt,
+      note: 'Keep this email for your records.',
     } },
   };
 }

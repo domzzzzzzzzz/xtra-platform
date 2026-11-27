@@ -31,7 +31,7 @@ export default async function publicRoutes(app: FastifyInstance) {
     return {
       venue: { name: v.name, slug: v.slug, logoUrl: v.logoUrl, address: v.address, mapUrl: v.mapUrl, lat: v.mapLat, lng: v.mapLng, photoUrl: v.photoUrl, instagram: v.instagram, tiktok: v.tiktok, phone: v.phone, where: s.where ?? v.address ?? '', color: s.color ?? null },
       depositPerPerson: v.depositPerPerson,
-      notifyChannel: v.notifyChannel,
+      notifyChannel: 'both',
       askNames: s.askNames ?? true,
       mapPick: s.mapPick ?? false,
       socials: s.socials ?? {},
@@ -102,7 +102,7 @@ export default async function publicRoutes(app: FastifyInstance) {
       deposit: { amount: r.depositAmount, paid: Boolean(r.depositPaidAt), due: r.status === 'accepted' && r.depositAmount > 0 },
       declineReason: r.status === 'declined' ? r.declineReason : null,
       venue: { name: v.name, slug: v.slug, logoUrl: v.logoUrl, address: v.address, mapUrl: v.mapUrl, lat: v.mapLat, lng: v.mapLng, photoUrl: v.photoUrl, phone: v.phone, instagram: v.instagram, where: v.settings.where ?? v.address ?? '', color: v.settings.color ?? null },
-      notifyChannel: v.notifyChannel,
+      notifyChannel: 'both',
       party: party.map((p) => ({ name: p.name, isBooker: p.isBooker, arrived: Boolean(p.checkedInAt), passUrl: showPasses ? `${config.publicAppUrl}/p/${p.qrToken}` : null })),
     };
   });

@@ -8,6 +8,9 @@ import { computeBill } from '../lib/pricing.js';
 import { config } from '../config.js';
 import { recordSpend, upsertGuest, ensureVenueGuest } from './guests-service.js';
 import { startPayment } from './payments.js';
+import { notifyGuest } from '../integrations/notify.js';
+import { billReceipt } from './guest-messages.js';
+import { prettyDate } from '../lib/dates.js';
 
 type P = { venueId: string };
 type PT = P & { tabId: string };
@@ -26,7 +29,7 @@ export async function billFor(tab: Tab) {
     const [r] = await db.select().from(schema.reservations).where(eq(schema.reservations.id, tab.reservationId));
     if (r) {
       minSpend = r.minSpend;
-      depositPaid = r.depositPaidAt ? r.depositAmount : 0;
+      depositPaid = r.depositPaidAt && !r.depositRefundedAt ? r.depositAmount : 0;
     }
   } else if (tab.tableId) {
     const [t] = await db.select().from(schema.floorItems).where(eq(schema.floorItems.id, tab.tableId));
@@ -65,7 +68,21 @@ export async function onTabPaid(tabId: string, method: (typeof schema.payMethod.
     if (u.guestId) await recordSpend(tx, u.venueId, u.guestId, bill.total + bill.depositCredit, u.id, 'bill', false);
     if (u.reservationId) await tx.update(schema.reservations).set({ status: 'completed' }).where(eq(schema.reservations.id, u.reservationId));
     return u;
+  }).then(async (u) => {
+    if (u) await sendReceipt(u).catch(() => {});
+    return u;
   });
+}
+
+/** Email the guest their receipt once the bill is paid (email only, never WhatsApp). */
+async function sendReceipt(t: Tab) {
+  if (!t.guestId || t.total <= 0) return;
+  const [g] = await db.select().from(schema.guests).where(eq(schema.guests.id, t.guestId));
+  if (!g?.email) return;
+  const [v] = await db.select().from(schema.venues).where(eq(schema.venues.id, t.venueId));
+  const items = (await db.select().from(schema.tabItems).where(eq(schema.tabItems.tabId, t.id))).filter((i) => i.status !== 'void');
+  const when = prettyDate((t.paidAt ?? new Date()).toLocaleDateString('en-CA', { timeZone: v.timezone }));
+  await notifyGuest({ channel: 'email', email: g.email, venueId: v.id, guestId: g.id, ...billReceipt(v, g, t, items, when) });
 }
 
 export default async function tabs(app: FastifyInstance) {

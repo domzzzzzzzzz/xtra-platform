@@ -43,7 +43,7 @@ export const bookingInput = z.object({
 
 /** Sends one catalogue message on the venue's channel(s). */
 const tell = (venue: Venue, to: { phone?: string | null; email?: string | null; guestId?: string | null }, m: M.GuestMessage) =>
-  notifyGuest({ channel: venue.notifyChannel, phone: to.phone, email: to.email, venueId: venue.id, guestId: to.guestId ?? undefined, ...m });
+  notifyGuest({ channel: 'both', phone: to.phone, email: to.email, venueId: venue.id, guestId: to.guestId ?? undefined, ...m });
 
 export const statusUrl = (code: string) => `${config.publicAppUrl}/b/${code}`;
 
@@ -142,10 +142,18 @@ export async function venueOf(id: string) {
   return v;
 }
 
-/** Sends every person in the party their own QR pass link. */
-export async function sendPasses(r: Reservation, venue: Venue) {
+/**
+ * The table is confirmed: the booker gets one message with the booking, their
+ * pass and any deposit receipt; every other guest with a contact gets their pass.
+ */
+export async function sendConfirmed(r: Reservation, venue: Venue) {
   const party = await db.select().from(schema.reservationGuests).where(eq(schema.reservationGuests.reservationId, r.id));
+  const g = await bookerOf(r);
   for (const p of party) {
+    if (p.isBooker) {
+      await tell(venue, { phone: g.phone, email: g.email, guestId: g.id }, M.bookingConfirmed(venue, g, r, p));
+      continue;
+    }
     if (!p.phone && !p.email) continue;
     await tell(venue, p, M.bookingPass(venue, p, r));
   }
@@ -169,23 +177,23 @@ export async function acceptReservation(venue: Venue, r: Reservation, o: { table
     decidedBy: o.decidedBy ?? null, decidedAt: new Date(),
   }).where(and(eq(schema.reservations.id, r.id), eq(schema.reservations.status, 'in_review'))).returning();
   if (!u) throw conflict('This booking was already handled', 'already_decided');
-  await sendAccepted(venue, u);
-  if (deposit === 0) await sendPasses(u, venue);
+  await sendBookingUpdate(venue, u);
   return u;
 }
 
-export async function sendAccepted(venue: Venue, u: Reservation) {
-  const g = await bookerOf(u);
-  await tell(venue, { ...g, guestId: g.id }, M.bookingAccepted(venue, g, u));
+/** Accepted with a deposit due: the pay link. Confirmed: the booking with its passes. */
+export async function sendBookingUpdate(venue: Venue, u: Reservation) {
+  if (u.status === 'accepted') {
+    const g = await bookerOf(u);
+    await tell(venue, { ...g, guestId: g.id }, M.depositDue(venue, g, u));
+  } else await sendConfirmed(u, venue);
 }
 
 export async function onDepositPaid(reservationId: string) {
   const [r] = await db.update(schema.reservations).set({ status: 'confirmed', depositPaidAt: new Date() })
     .where(and(eq(schema.reservations.id, reservationId), eq(schema.reservations.status, 'accepted'))).returning();
   if (!r) return;
-  const venue = await venueOf(r.venueId), g = await bookerOf(r);
-  await tell(venue, { ...g, guestId: g.id }, M.depositPaid(venue, g, r));
-  await sendPasses(r, venue);
+  await sendConfirmed(r, await venueOf(r.venueId));
 }
 
 export default async function reservations(app: FastifyInstance) {
@@ -230,8 +238,7 @@ export default async function reservations(app: FastifyInstance) {
       status: deposit > 0 && !paid ? 'accepted' : 'confirmed', depositAmount: deposit, depositPaidAt: paid ? new Date() : null,
       decidedBy: user.sub, decidedAt: new Date(),
     }).where(eq(schema.reservations.id, r.id)).returning();
-    await sendAccepted(venue, u);
-    if (u.status === 'confirmed') await sendPasses(u, venue);
+    await sendBookingUpdate(venue, u);
     reply.code(201);
     return u;
   });
@@ -249,8 +256,7 @@ export default async function reservations(app: FastifyInstance) {
     await venueAccess(req, req.params.venueId, MANAGERS);
     const venue = await venueOf(req.params.venueId);
     const r = await loadRes(venue.id, req.params.id);
-    if (r.status === 'accepted') await sendAccepted(venue, r);
-    else if (['confirmed', 'arrived'].includes(r.status)) await sendPasses(r, venue);
+    if (['accepted', 'confirmed', 'arrived'].includes(r.status)) await sendBookingUpdate(venue, r);
     else throw conflict('Nothing to resend for this booking');
     return { ok: true };
   });
@@ -314,7 +320,7 @@ export default async function reservations(app: FastifyInstance) {
       .where(and(eq(schema.reservations.id, req.params.id), eq(schema.reservations.venueId, venue.id), eq(schema.reservations.status, 'in_review'))).returning();
     if (!u) throw conflict('This booking was already handled', 'already_decided');
     const g = await bookerOf(u);
-    await tell(venue, { ...g, guestId: g.id }, M.bookingDeclined(venue, g, u, b.reason));
+    await tell(venue, { ...g, guestId: g.id }, M.bookingCancelled(venue, g, u, { declined: true, reason: b.reason }));
     return u;
   });
 

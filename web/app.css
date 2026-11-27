@@ -776,3 +776,18 @@ video.cam{width:100%;border-radius:16px;background:#05061a;aspect-ratio:1;object
 .gscroll>.powered{padding:28px 0 18px}
 .login>.powered{margin-top:10px;padding:0}
 @media print{.powered{display:none}}
+
+/* orders, refunds, waitlist */
+.olist{display:flex;flex-direction:column;margin-top:8px}
+.orow{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:14px;align-items:center;padding:11px 0;border-top:1px solid var(--line)}
+.orow .who{display:flex;flex-direction:column;min-width:0}.orow small{font-size:13px;color:var(--mute);overflow-wrap:anywhere}
+.orow .st{display:flex;flex-direction:column;align-items:flex-end;text-align:right;gap:2px}.orow .st small{font-size:12px}
+.orow .acts{display:flex;gap:6px;justify-content:flex-end;min-width:74px}
+.orow.refunded .who,.orow.refunded .st b{opacity:.55}.orow.refunded .st b{text-decoration:line-through}
+.chip:disabled{opacity:.4;cursor:not-allowed}
+.rfopt{display:flex;justify-content:space-between;align-items:center;gap:12px;width:100%;text-align:left;border:1.5px solid var(--line);background:var(--bg);border-radius:12px;padding:12px 14px}
+.rfopt span{display:flex;flex-direction:column}.rfopt small{font-size:13px;color:var(--mute)}
+.rfopt.on{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.btn.warnt{color:var(--red);box-shadow:inset 0 0 0 1.5px var(--red)}
+@media(max-width:700px){.orow{grid-template-columns:minmax(0,1fr) auto}.orow .acts{grid-column:1/-1;justify-content:flex-start}}
+.wldone{display:flex;flex-direction:column;gap:10px;padding:24px 4px;text-align:center}.wldone b{font-size:22px;font-weight:800;font-stretch:112%}.wldone span{color:#5b6280;font-size:15px}

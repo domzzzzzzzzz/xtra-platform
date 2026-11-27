@@ -117,7 +117,7 @@ describe('Guest emails', () => {
   const res = { code: 'AB12CD', date: '2026-12-05', slotLabel: '22:00 to 23:30', partySize: 4, depositAmount: 100000, depositPaidAt: null };
 
   it('a booking email is branded, with the details, the button and the venue as sender', async () => {
-    const m = M.bookingAccepted(venue, { firstName: 'Nour' }, res);
+    const m = M.depositDue(venue, { firstName: 'Nour' }, res);
     expect(m.subject).toBe('Pay your deposit to confirm · Lumen Rooftop · Sat 5 Dec');
     expect(m.wa).toEqual({ name: 'xtra_booking_deposit', header: 'Lumen Rooftop', params: ['Nour', 'Sat 5 Dec', 'EGP 1,000'], button: 'b/AB12CD' });
     const parts = M.emailParts(venue, m.mail.doc);
@@ -128,6 +128,17 @@ describe('Guest emails', () => {
     expect(parts.html).toContain('Pay EGP 1,000');
     expect(parts.html).toContain('href="http://test.local/b/AB12CD"');
     expect(parts.body).toContain('Time: 10:00 PM');
+  });
+
+  it('a confirmed booking is one message: the booking, the pass QR and the deposit receipt', () => {
+    const m = M.bookingConfirmed(venue, { firstName: 'Nour' }, { ...res, depositPaidAt: new Date() }, { name: 'Nour Fahmy', qrToken: 'tok123' });
+    expect(m.wa).toEqual({ name: 'xtra_booking_pass', header: 'Lumen Rooftop', params: ['Nour', 'Sat 5 Dec', '10:00 PM'], button: 'p/tok123' });
+    const parts = M.emailParts(venue, m.mail.doc);
+    expect(parts.html).toContain('tok123');
+    expect(parts.html).toContain('EGP 1,000');
+    const d = M.bookingCancelled(venue, { firstName: 'Nour' }, res, { declined: true, reason: 'We are closed for a private party.' });
+    expect(d.wa?.name).toBe('xtra_booking_cancelled');
+    expect(d.wa?.params[2]).toBe('Lumen Rooftop cannot take your booking on this night. We are closed for a private party. No payment was taken.');
   });
 
   it('offers carry an unsubscribe link that works', async () => {
@@ -150,7 +161,7 @@ describe('Guest emails', () => {
     expect(m.subject).toBe('Your 2 tickets · Afro Night · Fri 5 Dec, 10:00 pm');
     expect(html.match(/\/api\/public\/qr\//g)).toHaveLength(2);
     expect(html).toContain('Total paid');
-    expect(html).toContain('EGP 1,902.6');
+    expect(html).toContain('EGP 1,902.60');
   });
 
   it('records the email HTML so it can be sent again', async () => {
