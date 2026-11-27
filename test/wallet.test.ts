@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { config } from '../src/config.js';
 import forge from 'node-forge';
-import { appleCreds, applePass, applePkpass, appleWalletReady, googleObject, googleWalletUrl, type PassInfo } from '../src/integrations/wallet.js';
+import { appleCreds, issuerContact, applePass, applePkpass, appleWalletReady, googleObject, googleWalletUrl, type PassInfo } from '../src/integrations/wallet.js';
 import { renderEmail } from '../src/integrations/email-html.js';
 import { bookingTimes } from '../src/modules/passes.js';
 import { fakeAppleCerts } from './helpers.js';
@@ -50,6 +50,11 @@ describe('Wallet passes', () => {
     const png = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c6360000002000154a24f5d0000000049454e44ae426082', 'hex');
     const branded = (await applePkpass(info, { logo: png, strip: png })).toString('latin1');
     expect(branded).toContain('strip.png');
+    // Apple's terms: issuer name and contact details for questions and complaints.
+    process.env.SUPPORT_EMAIL = 'help@xtratickets.com';
+    expect(issuerContact()).toContain('Email: help@xtratickets.com');
+    expect(googleObject(info).textModulesData).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'issuer', header: 'Issued by' })]));
+    delete process.env.SUPPORT_EMAIL;
     Object.assign(config.appleWallet, { passTypeId: '', teamId: '', cert: '', key: '', wwdr: '' });
   });
 

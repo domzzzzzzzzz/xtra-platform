@@ -125,6 +125,7 @@ export function googleObject(p: PassInfo) {
       ...extra.map((f) => ({ id: f.key, header: f.label, body: f.value })),
       { id: 'when', header: 'When', body: whenLong(p.startsAt) },
       ...(p.voided ? [{ id: 'status', header: 'Status', body: 'Cancelled. This pass no longer works at the door.' }] : []),
+      { id: 'issuer', header: 'Issued by', body: issuerContact() },
     ],
     linksModuleData: { uris: [{ id: 'pass', uri: p.passUrl, description: 'Open my pass' }] },
   };
@@ -272,6 +273,17 @@ const labelOn = (hex: string) => {
   return `rgb(${mix(n >> 16)}, ${mix((n >> 8) & 255)}, ${mix(n & 255)})`;
 };
 
+/** Who issues the pass and where guests send questions or complaints (from the env). */
+export function issuerContact() {
+  const e = process.env;
+  const lines = [
+    `${e.LEGAL_COMPANY_NAME || 'XTRA'}, on behalf of the venue.`,
+    e.LEGAL_ADDRESS, e.SUPPORT_PHONE && `Phone: ${e.SUPPORT_PHONE}`, e.SUPPORT_EMAIL && `Email: ${e.SUPPORT_EMAIL}`,
+    `Terms: ${app()}/terms`,
+  ];
+  return lines.filter(Boolean).join('\n');
+}
+
 /** Images made from the venue logo and event poster (PNG, already sized). */
 export type AppleImages = { logo?: Buffer; logo2x?: Buffer; strip?: Buffer; strip2x?: Buffer };
 
@@ -287,8 +299,10 @@ export async function applePkpass(p: PassInfo, img: AppleImages = {}): Promise<B
     formatVersion: 1,
     passTypeIdentifier: a.passTypeId,
     teamIdentifier: a.teamId,
-    organizationName: p.venueName,
-    description: p.kind === 'ticket' ? `Ticket: ${p.title}` : `Booking at ${p.venueName}`,
+    // Apple's pass terms: passes go out under our own brand (XTRA); the venue's name
+    // and logo are referenced content we have the venue's permission to show.
+    organizationName: 'XTRA',
+    description: p.kind === 'ticket' ? `Ticket: ${p.title} at ${p.venueName}, by XTRA` : `Booking at ${p.venueName}, by XTRA`,
     serialNumber: p.qrToken,
     // The venue logo already shows the name; the text is for venues without one.
     ...(img.logo ? {} : { logoText: p.venueName }),
@@ -320,6 +334,8 @@ export async function applePkpass(p: PassInfo, img: AppleImages = {}): Promise<B
     { key: 'place', label: 'Your place', value: p.subtitle, changeMessage: 'Your place changed: %@' },
     { key: 'link', label: 'Your pass online', value: p.passUrl, attributedValue: `<a href="${p.passUrl}">Open my pass</a>` },
     { key: 'help', label: 'At the door', value: 'Show this QR. Each guest needs their own pass.' },
+    // Apple requires the issuer's name, address, phone and email for questions and complaints.
+    { key: 'issuer', label: 'Issued by', value: issuerContact() },
   );
   pass.setBarcodes({ message: p.qrToken, format: 'PKBarcodeFormatQR', messageEncoding: 'iso-8859-1', altText: p.qrToken.slice(0, 8).toUpperCase() });
   return pass.getAsBuffer();
