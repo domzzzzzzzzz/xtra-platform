@@ -25,7 +25,9 @@ Create these in WhatsApp Manager → Message templates. For all of them:
 
 Guests get one message per moment, on both WhatsApp and email: request received, deposit to pay (only when there is one), confirmed with their pass, cancelled or declined, refunded, and a waitlist place opening. The bill receipt goes by email only. `xtra_booking_pass` carries the booker's confirmation too, and `xtra_booking_cancelled` covers declined requests ({{3}} holds the reason and what happens to the deposit).
 
-No longer used, safe to delete in Meta: `xtra_booking_accepted`, `xtra_deposit_paid`, `xtra_booking_declined`, `xtra_booking_reminder`.
+No longer used, safe to delete in Meta: `xtra_booking_accepted`, `xtra_deposit_paid`, `xtra_booking_declined`.
+
+`xtra_booking_reminder` is used again, but only by venues that switch on *Remind guests on the day* (Venue setup → Fewer no-shows). Keep it approved. Body: `Hi {{1}}, this is a reminder of your booking tonight at {{2}}. Please have your entry pass ready at the door.` (samples Nour · 10:00 PM), button *Open pass* `p/abc123`.
 
 The last three (refund, waitlist, morning report) are new. Until Meta approves them, those messages go by email only. Once approved, add their names to `WHATSAPP_NEW_TEMPLATES` in Dokploy, comma separated, for example `xtra_refund,xtra_waitlist_open,xtra_daily_report`, and redeploy.
 

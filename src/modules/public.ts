@@ -1,4 +1,5 @@
 /** Guest-facing endpoints: venue booking page, booking status, passes, guest account. */
+import { sourceOf } from './share.js';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { and, asc, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
@@ -79,7 +80,8 @@ export default async function publicRoutes(app: FastifyInstance) {
   /* Guest sends a booking request. It goes to the venue "In review". */
   app.post<{ Params: { slug: string } }>('/public/venues/:slug/bookings', async (req, reply) => {
     const v = await venueBySlug(req.params.slug, 'reservations');
-    let r = await createBooking(v, parse(bookingInput, req.body));
+    const b = parse(bookingInput.extend({ src: z.string().max(20).optional() }), req.body);
+    let r = await createBooking(v, b, sourceOf(b.src));
     if (v.settings.approval === 'auto') r = await acceptReservation(v, r, {});
     reply.code(201);
     return { code: r.code, status: r.status, statusUrl: statusUrl(r.code) };

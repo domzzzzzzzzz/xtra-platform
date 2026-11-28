@@ -78,6 +78,34 @@
       "when": 1795826591101,
       "tag": "0010_account_password_changed",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1795878350850,
+      "tag": "0011_kitchen_tickets",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1795878906816,
+      "tag": "0012_split_bills",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1795879179883,
+      "tag": "0013_promoters",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1795879922795,
+      "tag": "0014_billing",
+      "breakpoints": true
     }
   ]
 }

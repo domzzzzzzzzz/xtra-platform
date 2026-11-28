@@ -39,9 +39,10 @@ if (!exists) {
     return { venueId: v.id, startsAt: hm(m), endsAt: hm(m + 30), capacity: 0, maxBookings: 4 };
   }));
   await db.insert(schema.menuItems).values([
-    { venueId: v.id, category: 'Drinks', name: 'Mojito', price: 32000 },
-    { venueId: v.id, category: 'Drinks', name: 'Espresso', price: 9000 },
-    { venueId: v.id, category: 'Food', name: 'Truffle fries', price: 21000 },
+    { venueId: v.id, category: 'Drinks', name: 'Mojito', price: 32000, options: [{ name: 'Style', required: false, multi: false, choices: [{ name: 'Classic', price: 0 }, { name: 'Passion fruit', price: 3000 }] }] },
+    { venueId: v.id, category: 'Drinks', name: 'Espresso', price: 9000, options: [{ name: 'Size', required: true, multi: false, choices: [{ name: 'Single', price: 0 }, { name: 'Double', price: 3000 }] }] },
+    { venueId: v.id, category: 'Food', name: 'Truffle fries', price: 21000, station: 'kitchen', options: [{ name: 'Extras', required: false, multi: true, choices: [{ name: 'Parmesan', price: 2500 }, { name: 'No truffle oil', price: 0 }] }] },
+    { venueId: v.id, category: 'Food', name: 'Sliders', price: 38000, station: 'kitchen' },
   ]);
   await db.insert(schema.communityTiers).values([
     { venueId: v.id, name: 'Member', minSpend: 0, perks: ['Birthday welcome drink'], sort: 0 },

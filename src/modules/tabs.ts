@@ -1,10 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { parse, venueAccess, MANAGERS, SERVICE } from '../lib/http.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
-import { computeBill } from '../lib/pricing.js';
+import { computeBill, type Bill } from '../lib/pricing.js';
 import { config } from '../config.js';
 import { recordSpend, upsertGuest, ensureVenueGuest } from './guests-service.js';
 import { startPayment } from './payments.js';
@@ -18,9 +18,14 @@ type Tab = typeof schema.tabs.$inferSelect;
 
 /** The bill for a tab right now (or as frozen when paid). */
 export async function billFor(tab: Tab) {
-  const items = await db.select().from(schema.tabItems).where(eq(schema.tabItems.tabId, tab.id)).orderBy(asc(schema.tabItems.createdAt));
+  const [items, payments] = await Promise.all([
+    db.select().from(schema.tabItems).where(eq(schema.tabItems.tabId, tab.id)).orderBy(asc(schema.tabItems.createdAt)),
+    db.select().from(schema.tabPayments).where(eq(schema.tabPayments.tabId, tab.id)).orderBy(asc(schema.tabPayments.createdAt)),
+  ]);
+  const paid = payments.reduce((s, p) => s + p.amount, 0);
+  const out = (bill: Bill) => ({ items, payments, bill: { ...bill, paid, remaining: Math.max(0, bill.total - paid) } });
   if (tab.status === 'paid') {
-    return { items, bill: { subtotal: tab.subtotal, minSpend: tab.subtotal + tab.minSpendTopUp, minSpendTopUp: tab.minSpendTopUp, service: tab.service, vat: tab.vat, depositCredit: tab.depositCredit, total: tab.total } };
+    return out({ subtotal: tab.subtotal, minSpend: tab.subtotal + tab.minSpendTopUp, minSpendTopUp: tab.minSpendTopUp, service: tab.service, vat: tab.vat, depositCredit: tab.depositCredit, total: tab.total });
   }
   const [venue] = await db.select().from(schema.venues).where(eq(schema.venues.id, tab.venueId));
   let minSpend = 0;
@@ -38,16 +43,32 @@ export async function billFor(tab: Tab) {
       minSpend = zone?.minSpend ?? 0;
     }
   }
-  const bill = computeBill({
+  return out(computeBill({
     items: items.filter((i) => i.status !== 'void'), minSpend, serviceBps: venue.serviceBps, vatBps: venue.vatBps, depositPaid,
-  });
-  return { items, bill };
+  }));
 }
 
 async function loadTab(venueId: string, tabId: string) {
   const [t] = await db.select().from(schema.tabs).where(and(eq(schema.tabs.id, tabId), eq(schema.tabs.venueId, venueId)));
   if (!t) throw notFound('Bill not found');
   return t;
+}
+
+/** Check the waiter's picks against the item's extras and price them from the menu. */
+export function pickOptions(m: typeof schema.menuItems.$inferSelect, picks: { group: string; name: string }[]): schema.PickedOption[] {
+  const out: schema.PickedOption[] = [];
+  for (const g of m.options ?? []) {
+    const mine = picks.filter((p) => p.group === g.name);
+    if (g.required && !mine.length) throw badRequest(`Pick ${g.name.toLowerCase()} for ${m.name}`, 'option_required');
+    if (!g.multi && mine.length > 1) throw badRequest(`Pick one ${g.name.toLowerCase()} for ${m.name}`, 'option_one');
+    for (const p of mine) {
+      const c = g.choices.find((x) => x.name === p.name);
+      if (!c) throw badRequest(`${p.name} is not an option for ${m.name}`, 'option_unknown');
+      if (!out.some((o) => o.group === g.name && o.name === c.name)) out.push({ group: g.name, name: c.name, price: c.price });
+    }
+  }
+  if (picks.some((p) => !(m.options ?? []).some((g) => g.name === p.group))) throw badRequest(`Unknown option for ${m.name}`, 'option_unknown');
+  return out;
 }
 
 const openOnly = (t: Tab) => {
@@ -58,13 +79,16 @@ const openOnly = (t: Tab) => {
 export async function onTabPaid(tabId: string, method: (typeof schema.payMethod.enumValues)[number]) {
   const [tab] = await db.select().from(schema.tabs).where(eq(schema.tabs.id, tabId));
   if (!tab || tab.status !== 'open') return null;
-  const { bill } = await billFor(tab);
+  const { bill, payments } = await billFor(tab);
   return db.transaction(async (tx) => {
+    const rest = bill.total - bill.paid;
+    const methods = new Set([...payments.map((p) => p.method), ...(rest > 0 ? [method] : [])]);
     const [u] = await tx.update(schema.tabs).set({
       status: 'paid', subtotal: bill.subtotal, minSpendTopUp: bill.minSpendTopUp, service: bill.service, vat: bill.vat,
-      depositCredit: bill.depositCredit, total: bill.total, payMethod: method, paidAt: new Date(),
+      depositCredit: bill.depositCredit, total: bill.total, payMethod: methods.size > 1 ? 'mixed' : ([...methods][0] ?? method), paidAt: new Date(),
     }).where(and(eq(schema.tabs.id, tab.id), eq(schema.tabs.status, 'open'))).returning();
     if (!u) return null;
+    if (rest > 0) await tx.insert(schema.tabPayments).values({ venueId: u.venueId, tabId: u.id, amount: rest, method });
     if (u.guestId) await recordSpend(tx, u.venueId, u.guestId, bill.total + bill.depositCredit, u.id, 'bill', false);
     if (u.reservationId) await tx.update(schema.reservations).set({ status: 'completed' }).where(eq(schema.reservations.id, u.reservationId));
     return u;
@@ -93,9 +117,14 @@ export default async function tabs(app: FastifyInstance) {
       .orderBy(asc(schema.menuItems.category), asc(schema.menuItems.sort), asc(schema.menuItems.name));
   });
 
+  const optionGroup = z.object({
+    name: z.string().trim().min(1).max(40), required: z.boolean().default(false), multi: z.boolean().default(false),
+    choices: z.array(z.object({ name: z.string().trim().min(1).max(40), price: z.number().int().min(0).default(0) })).min(1).max(20),
+  });
   const menuItem = z.object({
-    category: z.string().min(1), name: z.string().min(1), description: z.string().default(''),
+    category: z.string().trim().min(1).max(40), name: z.string().trim().min(1).max(80), description: z.string().max(300).default(''),
     price: z.number().int().min(0), active: z.boolean().default(true), sort: z.number().int().default(0),
+    station: z.enum(schema.STATIONS).default('bar'), options: z.array(optionGroup).max(8).default([]),
   });
 
   app.post<{ Params: P }>('/venues/:venueId/menu', async (req, reply) => {
@@ -176,37 +205,52 @@ export default async function tabs(app: FastifyInstance) {
     const tab = await loadTab(req.params.venueId, req.params.tabId);
     openOnly(tab);
     const { items } = parse(z.object({
-      items: z.array(z.object({ menuItemId: z.string().uuid(), qty: z.number().int().min(1).max(99), note: z.string().max(200).default('') })).min(1).max(50),
+      items: z.array(z.object({
+        menuItemId: z.string().uuid(), qty: z.number().int().min(1).max(99), note: z.string().trim().max(200).default(''),
+        /** Picked extras, by group and choice name. */
+        options: z.array(z.object({ group: z.string(), name: z.string() })).max(40).default([]),
+      })).min(1).max(50),
     }), req.body);
     const menu = await db.select().from(schema.menuItems)
       .where(and(eq(schema.menuItems.venueId, tab.venueId), inArray(schema.menuItems.id, items.map((i) => i.menuItemId))));
     const rows = items.map((i) => {
       const m = menu.find((x) => x.id === i.menuItemId);
       if (!m || !m.active) throw badRequest('An item is not on the menu');
-      return { tabId: tab.id, menuItemId: m.id, name: m.name, unitPrice: m.price, qty: i.qty, note: i.note, addedBy: user.sub };
+      const options = pickOptions(m, i.options);
+      const unitPrice = m.price + options.reduce((s, o) => s + o.price, 0);
+      return { tabId: tab.id, menuItemId: m.id, name: m.name, unitPrice, qty: i.qty, note: i.note, options, station: m.station, addedBy: user.sub };
     });
     await db.insert(schema.tabItems).values(rows);
     return { ...tab, ...(await billFor(tab)) };
   });
 
-  /* "Send to bar": every new item on the tab goes out. */
+  /* "Send": every new item goes to the kitchen or bar screen under one ticket number. */
   app.post<{ Params: PT }>('/venues/:venueId/tabs/:tabId/send', async (req) => {
     await venueAccess(req, req.params.venueId, SERVICE);
     const tab = await loadTab(req.params.venueId, req.params.tabId);
     openOnly(tab);
-    const sent = await db.update(schema.tabItems).set({ status: 'sent' })
-      .where(and(eq(schema.tabItems.tabId, tab.id), eq(schema.tabItems.status, 'new'))).returning();
-    return { sent: sent.length, items: sent };
+    const sent = await db.transaction(async (tx) => {
+      // One venue at a time so two waiters never get the same ticket number.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'ticket:' + tab.venueId}))`);
+      const [{ n }] = await tx.select({ n: sql<number>`coalesce(max(${schema.tabItems.ticketNo}), 0)::int` })
+        .from(schema.tabItems).innerJoin(schema.tabs, eq(schema.tabs.id, schema.tabItems.tabId))
+        .where(eq(schema.tabs.venueId, tab.venueId));
+      return tx.update(schema.tabItems).set({ status: 'sent', ticketNo: n + 1, sentAt: new Date() })
+        .where(and(eq(schema.tabItems.tabId, tab.id), eq(schema.tabItems.status, 'new'))).returning();
+    });
+    return { sent: sent.length, ticketNo: sent[0]?.ticketNo ?? null, items: sent };
   });
 
-  /* Take one off: from items not sent yet first. Sent items need a manager. */
+  /* Take one off: a given line, or the newest of an item (not sent yet first). Sent items need a manager. */
   app.post<{ Params: PT }>('/venues/:venueId/tabs/:tabId/remove', async (req) => {
     const { role } = await venueAccess(req, req.params.venueId, SERVICE);
     const tab = await loadTab(req.params.venueId, req.params.tabId);
     openOnly(tab);
-    const { menuItemId } = parse(z.object({ menuItemId: z.string().uuid() }), req.body);
+    const b = parse(z.object({ menuItemId: z.string().uuid().optional(), itemId: z.string().uuid().optional() })
+      .refine((x) => x.menuItemId || x.itemId, 'Say which item'), req.body);
     const rows = await db.select().from(schema.tabItems)
-      .where(and(eq(schema.tabItems.tabId, tab.id), eq(schema.tabItems.menuItemId, menuItemId), ne(schema.tabItems.status, 'void')))
+      .where(and(eq(schema.tabItems.tabId, tab.id), ne(schema.tabItems.status, 'void'),
+        b.itemId ? eq(schema.tabItems.id, b.itemId) : eq(schema.tabItems.menuItemId, b.menuItemId!)))
       .orderBy(desc(schema.tabItems.createdAt));
     const it = rows.find((r) => r.status === 'new') ?? rows[0];
     if (!it) throw notFound('Item not on this bill');
@@ -236,6 +280,43 @@ export default async function tabs(app: FastifyInstance) {
   });
 
   /**
+   * Take part of the bill: split between friends, or part cash part card.
+   * When the parts reach the total the bill closes and the table is free.
+   */
+  app.post<{ Params: PT }>('/venues/:venueId/tabs/:tabId/payments', async (req) => {
+    const { user } = await venueAccess(req, req.params.venueId, SERVICE);
+    const b = parse(z.object({
+      method: z.enum(['card', 'cash', 'instapay', 'wallet']), amount: z.number().int().min(1), label: z.string().trim().max(40).default(''),
+    }), req.body);
+    const res = await db.transaction(async (tx) => {
+      // One payment at a time per bill, so two waiters can't overpay it.
+      await tx.execute(sql`select 1 from tabs where id = ${req.params.tabId} for update`);
+      const tab = await loadTab(req.params.venueId, req.params.tabId);
+      openOnly(tab);
+      const { bill } = await billFor(tab);
+      if (b.amount > bill.remaining) throw badRequest(`Only ${(bill.remaining / 100).toLocaleString('en-US')} EGP is left on this bill`, 'over_pay');
+      await tx.insert(schema.tabPayments).values({ venueId: tab.venueId, tabId: tab.id, amount: b.amount, method: b.method, label: b.label, takenBy: user.sub });
+      return { tab, closes: b.amount === bill.remaining };
+    });
+    if (res.closes) {
+      const paid = (await onTabPaid(res.tab.id, b.method)) ?? (await loadTab(req.params.venueId, req.params.tabId));
+      return { ...paid, ...(await billFor(paid)) };
+    }
+    return { ...res.tab, ...(await billFor(res.tab)) };
+  });
+
+  /* Undo a part payment typed by mistake (managers, open bills only). */
+  app.delete<{ Params: PT & { paymentId: string } }>('/venues/:venueId/tabs/:tabId/payments/:paymentId', async (req) => {
+    const { role } = await venueAccess(req, req.params.venueId, MANAGERS);
+    if (!MANAGERS.includes(role)) throw forbidden('Ask a manager to undo a payment');
+    const tab = await loadTab(req.params.venueId, req.params.tabId);
+    openOnly(tab);
+    const [d] = await db.delete(schema.tabPayments).where(and(eq(schema.tabPayments.id, req.params.paymentId), eq(schema.tabPayments.tabId, tab.id))).returning();
+    if (!d) throw notFound('Payment not found');
+    return { ...tab, ...(await billFor(tab)) };
+  });
+
+  /**
    * Close the bill. Cash / card machine / InstaPay / wallet are confirmed by
    * staff on the spot. "paymob" returns a link the guest pays on their phone.
    */
@@ -245,19 +326,20 @@ export default async function tabs(app: FastifyInstance) {
     openOnly(tab);
     const { method } = parse(z.object({ method: z.enum(['card', 'cash', 'instapay', 'wallet', 'paymob']) }), req.body);
     const { bill } = await billFor(tab);
-    if (method === 'paymob' && bill.total > 0) {
+    if (method === 'paymob' && bill.remaining > 0) {
       let customer = { firstName: 'Guest', lastName: '', email: null as string | null, phone: '+200000000000' };
       if (tab.guestId) {
         const [g] = await db.select().from(schema.guests).where(eq(schema.guests.id, tab.guestId));
         if (g) customer = { firstName: g.firstName, lastName: g.lastName, email: g.email, phone: g.phone };
       }
       const pay = await startPayment({
-        venueId: tab.venueId, purpose: 'tab', refId: tab.id, amount: bill.total, description: 'Table bill',
+        venueId: tab.venueId, purpose: 'tab', refId: tab.id, amount: bill.remaining, description: 'Table bill',
         customer, redirectUrl: `${config.publicAppUrl}/paid`,
       });
       return { status: 'pending', bill, ...pay };
     }
     const paid = await onTabPaid(tab.id, bill.total === 0 ? 'free' : method);
+    if (!paid) throw conflict('This bill is closed', 'tab_closed');
     return { status: 'paid', bill, tab: paid };
   });
 }

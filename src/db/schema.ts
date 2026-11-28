@@ -54,6 +54,10 @@ export type VenueSettings = {
   automations?: Record<string, boolean>;
   /** Morning summary of last night for the owner. Off unless switched on. */
   dailyReport?: { on: boolean; channel?: 'email' | 'whatsapp' | 'both'; emails: string[]; phones: string[] };
+  /** Day-of reminder, `hours` before the booking time. Off unless switched on. */
+  reminder?: { on: boolean; hours: number };
+  /** Morning after: confirmed bookings nobody checked in for become no-shows; block a guest after `blockAfter` (0 = never). */
+  noShows?: { auto: boolean; blockAfter: number };
 };
 
 export const notifyChannel = pgEnum('notify_channel', ['email', 'whatsapp', 'both']);
@@ -88,6 +92,7 @@ export const venues = pgTable('venues', {
   /** Screen settings the venue edits in Venue setup (slots grid, toggles, socials, automations). */
   settings: jsonb('settings').$type<VenueSettings>().notNull().default({}),
   /** Modules XTRA switched on for this venue (see lib/access.ts FEATURES). */
+  plan: jsonb('plan').$type<VenuePlan>().notNull().default({ price: 0, status: 'trial' }),
   features: jsonb('features').$type<string[]>().notNull().default(['reservations', 'ordering', 'ticketing', 'marketing', 'guests', 'community']),
   active: boolean('active').notNull().default(true),
   createdAt: createdAt(),
@@ -241,6 +246,8 @@ export const reservations = pgTable('reservations', {
   date: date('date').notNull(),
   slotId: uuid('slot_id').references(() => timeSlots.id, { onDelete: 'set null' }),
   slotLabel: text('slot_label').notNull().default(''),
+  /** Came through a promoter's link. */
+  promoterId: uuid('promoter_id'),
   zoneId: uuid('zone_id'),
   tableId: uuid('table_id'),
   partySize: integer('party_size').notNull(),
@@ -291,10 +298,20 @@ export const menuItems = pgTable('menu_items', {
   price: integer('price').notNull(),
   active: boolean('active').notNull().default(true),
   sort: integer('sort').notNull().default(0),
+  /** Where the ticket prints: the kitchen or the bar. */
+  station: text('station').$type<Station>().notNull().default('bar'),
+  /** Extras the waiter picks when ordering (size, sauce, "no ice"). Prices add to the item. */
+  options: jsonb('options').$type<MenuOptionGroup[]>().notNull().default([]),
 });
 
+export const STATIONS = ['kitchen', 'bar'] as const;
+export type Station = (typeof STATIONS)[number];
+export type MenuOptionGroup = { name: string; required: boolean; multi: boolean; choices: { name: string; price: number }[] };
+/** An extra picked on one order line, copied so later menu edits never change a bill. */
+export type PickedOption = { group: string; name: string; price: number };
+
 export const tabStatus = pgEnum('tab_status', ['open', 'paid', 'void']);
-export const payMethod = pgEnum('pay_method', ['card', 'cash', 'instapay', 'wallet', 'paymob', 'free']);
+export const payMethod = pgEnum('pay_method', ['card', 'cash', 'instapay', 'wallet', 'paymob', 'free', 'mixed']);
 
 /** A running bill for a table. Totals are frozen when the tab is paid. */
 export const tabs = pgTable('tabs', {
@@ -330,10 +347,86 @@ export const tabItems = pgTable('tab_items', {
   unitPrice: integer('unit_price').notNull(),
   qty: integer('qty').notNull(),
   note: text('note').notNull().default(''),
+  /** unitPrice already includes these. */
+  options: jsonb('options').$type<PickedOption[]>().notNull().default([]),
+  station: text('station').$type<Station>().notNull().default('bar'),
+  /** status: new (not sent), sent (on the kitchen/bar screen), served (marked ready there), void. */
   status: tabItemStatus('status').notNull().default('new'),
+  /** One number per "Send": what the kitchen and bar call the ticket. */
+  ticketNo: integer('ticket_no'),
+  sentAt: timestamp('sent_at', { withTimezone: true }),
+  readyAt: timestamp('ready_at', { withTimezone: true }),
   addedBy: uuid('added_by'),
   createdAt: createdAt(),
-});
+}, (t) => [index('tab_items_tab_idx').on(t.tabId)]);
+
+/**
+ * Money taken on a bill. A bill can be paid in parts (split between friends,
+ * part cash part card); it closes when the parts reach the total.
+ */
+export const tabPayments = pgTable('tab_payments', {
+  id: id(),
+  venueId: venueRef(),
+  tabId: uuid('tab_id').notNull().references(() => tabs.id, { onDelete: 'cascade' }),
+  amount: integer('amount').notNull(),
+  method: payMethod('method').notNull(),
+  /** Who paid this part, if staff typed it ("Omar"). */
+  label: text('label').notNull().default(''),
+  takenBy: uuid('taken_by'),
+  createdAt: createdAt(),
+}, (t) => [index('tab_payments_tab_idx').on(t.tabId), index('tab_payments_venue_idx').on(t.venueId, t.createdAt)]);
+
+/** End of night: what the till should hold against what was counted. */
+export const shiftCloses = pgTable('shift_closes', {
+  id: id(),
+  venueId: venueRef(),
+  night: date('night').notNull(),
+  /** Expected money by method, in piastres, as it was when closed. */
+  expected: jsonb('expected').$type<Record<string, number>>().notNull(),
+  bills: integer('bills').notNull().default(0),
+  countedCash: integer('counted_cash').notNull(),
+  note: text('note').notNull().default(''),
+  closedBy: uuid('closed_by'),
+  createdAt: createdAt(),
+}, (t) => [index('shift_closes_venue_idx').on(t.venueId, t.night)]);
+
+/* ---------------------------------------------------------------- promoters */
+
+/**
+ * A promoter brings guests: through their own booking/ticket link (?ref=CODE)
+ * or names they put on the guest list from their private page (/pl/TOKEN).
+ */
+export const promoters = pgTable('promoters', {
+  id: id(),
+  venueId: venueRef(),
+  name: text('name').notNull(),
+  phone: text('phone'),
+  /** In links: /book/venue?ref=KARIM */
+  code: text('code').notNull(),
+  /** Their private guest list page. */
+  token: text('token').notNull(),
+  /** guest: `commission` piastres per guest who came in. percent: `commission` bps of what their guests spent. */
+  commissionKind: text('commission_kind').$type<'guest' | 'percent'>().notNull().default('guest'),
+  commission: integer('commission').notNull().default(0),
+  active: boolean('active').notNull().default(true),
+  createdAt: createdAt(),
+}, (t) => [uniqueIndex('promoters_code_uq').on(t.venueId, t.code), uniqueIndex('promoters_token_uq').on(t.token)]);
+
+/** Names on the door for one night, without a table. */
+export const guestList = pgTable('guest_list', {
+  id: id(),
+  venueId: venueRef(),
+  promoterId: uuid('promoter_id').references(() => promoters.id, { onDelete: 'set null' }),
+  night: date('night').notNull(),
+  name: text('name').notNull(),
+  phone: text('phone'),
+  /** Friends coming with them. */
+  plus: integer('plus').notNull().default(0),
+  note: text('note').notNull().default(''),
+  checkedInAt: timestamp('checked_in_at', { withTimezone: true }),
+  addedBy: uuid('added_by'),
+  createdAt: createdAt(),
+}, (t) => [index('guest_list_night_idx').on(t.venueId, t.night)]);
 
 /* ---------------------------------------------------------------- ticketing */
 
@@ -436,6 +529,7 @@ export const ticketOrders = pgTable('ticket_orders', {
   venueId: venueRef(),
   eventId: uuid('event_id').notNull().references(() => events.id),
   guestId: uuid('guest_id').references(() => guests.id),
+  promoterId: uuid('promoter_id'),
   status: ticketOrderStatus('status').notNull().default('held'),
   holdExpiresAt: timestamp('hold_expires_at', { withTimezone: true }).notNull(),
   promoCodeId: uuid('promo_code_id').references(() => promoCodes.id),
@@ -485,7 +579,7 @@ export const tickets = pgTable('tickets', {
 
 /* ---------------------------------------------------------------- payments */
 
-export const paymentPurpose = pgEnum('payment_purpose', ['deposit', 'tickets', 'tab']);
+export const paymentPurpose = pgEnum('payment_purpose', ['deposit', 'tickets', 'tab', 'saas']);
 export const paymentStatus = pgEnum('payment_status', ['pending', 'paid', 'failed', 'refunded']);
 
 export const payments = pgTable('payments', {
@@ -503,6 +597,41 @@ export const payments = pgTable('payments', {
   paidAt: timestamp('paid_at', { withTimezone: true }),
   createdAt: createdAt(),
 }, (t) => [index('payments_ref_idx').on(t.refId)]);
+
+/* ---------------------------------------------------------------- XTRA billing */
+
+/** What a venue pays XTRA each month. Set by XTRA admins. */
+export type VenuePlan = { price: number; status: 'trial' | 'active' | 'paused'; trialEnds?: string | null; note?: string };
+
+/** XTRA's monthly invoice to a venue for the platform. */
+export const saasInvoices = pgTable('saas_invoices', {
+  id: id(),
+  venueId: venueRef(),
+  number: text('number').notNull(),
+  /** "2026-12" */
+  period: text('period').notNull(),
+  amount: integer('amount').notNull(),
+  vat: integer('vat').notNull(),
+  total: integer('total').notNull(),
+  status: text('status').$type<'unpaid' | 'paid' | 'void'>().notNull().default('unpaid'),
+  dueDate: date('due_date').notNull(),
+  paidAt: timestamp('paid_at', { withTimezone: true }),
+  /** paymob | instapay | transfer | cash */
+  method: text('method'),
+  createdAt: createdAt(),
+}, (t) => [uniqueIndex('saas_invoices_period_uq').on(t.venueId, t.period), uniqueIndex('saas_invoices_number_uq').on(t.number)]);
+
+/** Money XTRA sent to a venue: what guests paid online for it (deposits, tickets, bills). */
+export const venuePayouts = pgTable('venue_payouts', {
+  id: id(),
+  venueId: venueRef(),
+  amount: integer('amount').notNull(),
+  paidOn: date('paid_on').notNull(),
+  reference: text('reference').notNull().default(''),
+  note: text('note').notNull().default(''),
+  by: uuid('by'),
+  createdAt: createdAt(),
+}, (t) => [index('venue_payouts_venue_idx').on(t.venueId, t.paidOn)]);
 
 /* ---------------------------------------------------------------- marketing */
 

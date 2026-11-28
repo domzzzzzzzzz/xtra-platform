@@ -25,13 +25,14 @@ One page, no build step, served by the same server:
 
 | Address | Who | What |
 | --- | --- | --- |
-| `/` | Staff | Floor, bookings, door scanner, orders and bills, events, marketing, guests, community, booking page, floor map, venue setup |
+| `/` | Staff | Floor, bookings, door scanner, orders and bills, kitchen and bar screen, menu, events, marketing, guests, community, booking page, floor map, venue setup |
 | `/book/:slug` | Guests | Booking page of a venue |
 | `/b/:code` | Guests | Booking status, deposit payment, QR pass |
 | `/e/:eventId` | Guests | Ticket page: seat map (theatre rows, standing, tables or a mix), 10-minute hold from the first pick, promo code, Paymob checkout |
 | `/o/:code` | Guests | Ticket order: payment status and every ticket |
 | `/t/:token`, `/p/:token` | Guests | One ticket or booking pass with its QR |
 | `/me` | Guests | Account, signed in with a WhatsApp code |
+| `/pl/:token` | Promoters | Their private guest list page: add names for tonight or tomorrow, see who came and what they earned this month |
 
 Staff screens show what each role may use. Built-in roles: owner and manager
 (everything), door (floor, bookings, door), waiter (floor, orders). A venue can
@@ -60,6 +61,14 @@ built-in test checkout at `/dev/pay/:id`, and messages are saved to the
 - **Holds**: the first seat a guest taps holds it for 10 minutes; adding or dropping seats keeps the same clock. Other guests see held seats as "on hold". Expired holds free the seats and the promo use (a sweeper runs every 20 seconds).
 - **Corporate / private events**: switch an event to *Invitation only* and nothing is sold. Sections can be *free seating* (sit anywhere in the section) or own seats. Invite one person to a zone or a seat picked on the map, or paste a list: own-seat sections hand out the next free seats row by row (`POST /venues/:id/events/:eventId/invites/bulk`).
 - **Passes**: every ticket QR is tied to its seat, table or standing zone. Opening the pass shows the map with a walking route from the entrance.
+- **Kitchen and bar**: each menu item goes to the kitchen or the bar. One *Send* from a waiter is one ticket number; the Kitchen screen shows it once per station, oldest first, turning yellow after 10 minutes and red after 20. *Ready* shows on the waiter's order. A device can print every new ticket (80 mm); Chrome started with `--kiosk-printing` prints without a dialog. Every venue gets a ready-made *Kitchen* role that only opens this screen.
+- **Sharing**: Booking page → *Share* gives one link per place (`?src=instagram|google|whatsapp|tiktok|qr|website`), a QR PNG and a website button (`<script src="/embed.js" data-venue="slug">`, optional `data-label`, `data-color`, `data-inline`). The booking's source is saved and Reports show where bookings come from. `/book/:slug` and `/e/:id` are served with their own title, preview picture and schema.org data (Restaurant + ReserveAction, Event) so links look right on WhatsApp, Instagram and Google. Reserve with Google itself needs Google's partner program; until then the Google link goes in the Business Profile's booking link.
+- **Fewer no-shows** (Venue setup, all off by default): a reminder on the day (2, 3 or 5 hours before, WhatsApp `xtra_booking_reminder` + email with a cancel link), at 6 AM confirmed bookings nobody checked in for become no-shows, and a guest with 2/3/5 no-shows is blocked from booking (blocked guests show under Guests → Blocked; untag to unblock). Guests can cancel from `/b/:code` (`POST /public/bookings/:code/cancel`) unless they paid a deposit.
+- **Promoters**: each has a link code. A booking or ticket order made from `/book/:slug?ref=CODE` or `/e/:id?ref=CODE` is theirs. Their guest list names show at the door. Commission is per guest who came in (booked guests who arrived, names checked in, tickets sold) or a % of what their guests spent (table bills + ticket sales).
+- **XTRA billing**: each venue has a plan (monthly price, Trial / Active / Paused). On the 1st XTRA invoices every active venue (price + 14% VAT, number `XTRA-YYYYMM-NNN`), emails it with a Paymob pay link, and the owner sees it under Venue setup → *Plan and invoices*. Money guests pay online (deposits, tickets, bills; booking fees stay with XTRA, minus refunds) is the venue's settlement; Admin records each payout and both sides see what is still owed.
+- **Split bills**: a bill can be paid in parts: split evenly, by items (service and VAT shared the same way), or any amount, each part by its own method. It closes when the parts reach the total and the table is free. Every bill keeps its payments in `tab_payments`, and reports count money by method from there.
+- **End of night** (Orders → End of night, needs Reports): money in by method for the night (until 6 AM), bills still open, items removed after they were sent, and a cash count that shows short/over. Each close is saved (`shift_closes`) and can be printed.
+- **Extras**: a menu item can have sets of extras (pick one, must pick one, or pick any), each choice with its own price. The price is added to the line and copied onto the bill.
 - **Marketing** only reaches guests who opted in on that channel (Law 151/2020).
 
 ## API map
@@ -74,7 +83,11 @@ All under `/api`. Staff send `Authorization: Bearer <token>` from `/auth/login`.
 | Floor map | `GET/PUT /venues/:id/floor` (whole map: zones, tables, sofas, chairs, bar, DJ...), `PATCH /venues/:id/floor/:itemId` (switch a chair on/off) |
 | Bookings | `GET/POST /venues/:id/reservations`, `.../:rid/accept`, `/decline`, `/table`, `/cancel`, `/no-show`, `/complete`, live map `GET /venues/:id/tonight` |
 | Door | `POST /venues/:id/checkin` with the QR token (booking passes and tickets) |
-| Ordering | menu `GET/POST/PATCH /venues/:id/menu`, bills `GET/POST /venues/:id/tabs`, `.../:tabId/items`, `/send`, `/items/:itemId/void`, `/pay` |
+| Ordering | menu `GET/POST/PATCH /venues/:id/menu` (station kitchen/bar, extras), bills `GET/POST /venues/:id/tabs`, `.../:tabId/items` (with extras and a note), `/send` (one ticket number), `/remove`, `/items/:itemId/void`, `/pay` |
+| Split bills and end of night | `POST .../tabs/:tabId/payments` `{method, amount, label}` (closes the bill when the parts reach the total), `DELETE .../payments/:paymentId` (managers), `GET /venues/:id/shift?night=`, `POST .../shift/close` `{countedCash, note}`, `GET .../shift/history` |
+| Promoters and guest list | `GET/POST /venues/:id/promoters`, `PATCH .../:promoterId` (code, commission, active, `newLink`), `GET/POST /venues/:id/guestlist?night=`, `DELETE .../:entryId`, `POST .../:entryId/checkin`; promoter page `GET /public/promoter/:token`, `POST/DELETE .../guests` |
+| XTRA billing | Admin: `GET /admin/billing`, `PUT /admin/venues/:id/plan`, `GET /admin/venues/:id/billing`, `POST .../invoices`, `POST /admin/invoices/:id/status`, `POST/DELETE .../payouts`; owner: `GET /venues/:id/billing`, `POST .../billing/invoices/:invoiceId/pay` |
+| Kitchen and bar | `GET /venues/:id/kitchen?station=kitchen\|bar\|all` (open tickets + ready in the last 20 min), `POST .../kitchen/:ticketNo/ready` `{station, ready}` |
 | Events | `GET/POST/PATCH /venues/:id/events`, seat map `PUT .../:eventId/map`, `GET .../sales`, `GET .../tickets` |
 | Promo codes | `GET/POST /venues/:id/promos`, `POST /venues/:id/promos/batch` (unique single-use codes, optionally locked to phones), `PATCH .../:promoId` |
 | Guests | `GET /venues/:id/guests?q=&tag=`, `GET/PATCH .../:guestId`, `POST .../:guestId/points`, tiers `GET/PUT /venues/:id/tiers` |

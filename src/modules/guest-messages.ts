@@ -120,6 +120,27 @@ export function bookingConfirmed(v: VenueLike, g: Person, r: Res, pass: { name: 
   };
 }
 
+/**
+ * Day-of reminder (only when the venue switches it on). Uses the approved
+ * xtra_booking_reminder template; the email also lets them cancel so the
+ * table can go to someone else.
+ */
+export function bookingReminder(v: VenueLike, g: Person, r: Res, passToken: string): GuestMessage {
+  const time = prettyTime(r.slotLabel), url = `${app()}/p/${passToken}`, manage = `${app()}/${statusPath(r.code)}`;
+  return {
+    kind: `booking_reminder:${r.code}`, subject: `See you tonight · ${v.name} · ${time}`,
+    body: `Hi ${g.firstName}, this is a reminder of your booking tonight at ${v.name} at ${time}. Please have your entry pass ready at the door: ${url}`,
+    wa: { name: 'xtra_booking_reminder', header: v.name, params: [g.firstName, time], button: `p/${passToken}` },
+    mail: { venue: v, doc: {
+      preheader: `Tonight at ${time}. Your pass is inside.`, title: `See you tonight, ${g.firstName}.`,
+      intro: `Your table is ready for ${time}, ${guests(r.partySize)}. Show your pass at the door. Plans changed? Cancel from your booking page so we can give the table to someone else.`,
+      rows: bookingRows(r),
+      button: { label: 'Open my pass', url },
+      secondary: { label: 'Cancel my booking', url: manage },
+    } },
+  };
+}
+
 export function bookingPass(v: VenueLike, p: { name: string; qrToken: string }, r: Res): GuestMessage {
   const date = prettyDate(r.date), time = prettyTime(r.slotLabel), url = `${app()}/p/${p.qrToken}`;
   const first = p.name.split(' ')[0] || p.name;
@@ -243,8 +264,8 @@ export function waitlistOpen(v: VenueLike, g: Person, x: { event: string; when: 
 
 /** Email only: what the guest paid at the venue, line by line. */
 export function billReceipt(v: VenueLike, g: Person, t: { id: string; paidAt: Date | null; total: number; service: number; vat: number; minSpendTopUp: number; depositCredit: number; subtotal: number; payMethod: string | null },
-  items: { name: string; qty: number; unitPrice: number }[], when: string): GuestMessage {
-  const receipt: [string, string][] = items.map((i) => [`${i.qty} × ${i.name}`, egp(i.qty * i.unitPrice)]);
+  items: { name: string; qty: number; unitPrice: number; options?: { name: string }[] }[], when: string): GuestMessage {
+  const receipt: [string, string][] = items.map((i) => [`${i.qty} × ${i.name}${i.options?.length ? ` (${i.options.map((o) => o.name).join(', ')})` : ''}`, egp(i.qty * i.unitPrice)]);
   if (t.minSpendTopUp) receipt.push(['Minimum spend top-up', egp(t.minSpendTopUp)]);
   if (t.service) receipt.push(['Service', egp(t.service)]);
   if (t.vat) receipt.push(['VAT', egp(t.vat)]);
