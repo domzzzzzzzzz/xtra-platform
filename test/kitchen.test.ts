@@ -45,7 +45,7 @@ describe('kitchen and bar tickets', () => {
     tabId = (await api.post(`${v()}/tabs`, { guestName: 'Walk-in', partySize: 2 })).body.id;
     const miss = await api.post(`${v()}/tabs/${tabId}/items`, { items: [{ menuItemId: burger, qty: 1 }] });
     expect(miss.status).toBe(400);
-    expect(miss.body.code ?? miss.body.error).toBeTruthy();
+    expect(miss.body.error).toBe('option_required');
     const two = await api.post(`${v()}/tabs/${tabId}/items`, { items: [{ menuItemId: burger, qty: 1, options: [{ group: 'Cooking', name: 'Medium' }, { group: 'Cooking', name: 'Well done' }] }] });
     expect(two.status).toBe(400);
     const ok = await api.post(`${v()}/tabs/${tabId}/items`, { items: [

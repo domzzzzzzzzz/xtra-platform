@@ -1,4 +1,5 @@
 import { promoterByRef } from './promoters-service.js';
+import { blockRepeatNoShows } from './reminders.js';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { and, asc, eq, gte, inArray, lte, ne, sql } from 'drizzle-orm';
@@ -345,6 +346,10 @@ export default async function reservations(app: FastifyInstance) {
       const [u] = await db.update(schema.reservations).set({ status }).where(eq(schema.reservations.id, r.id)).returning();
       // Cancelled or no-show: saved wallet passes show as no longer valid.
       if (status !== 'completed') walletChanged(passTokens.reservation(r.id));
+      if (status === 'no_show') {
+        const venue = await venueOf(r.venueId), limit = venue.settings.noShows?.blockAfter ?? 0;
+        if (limit > 0) await blockRepeatNoShows(venue.id, [r.guestId], limit);
+      }
       if (status === 'cancelled') {
         const venue = await venueOf(r.venueId), g = await bookerOf(u);
         await tell(venue, { ...g, guestId: g.id }, M.bookingCancelled(venue, g, u));

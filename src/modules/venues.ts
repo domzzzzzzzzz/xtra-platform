@@ -54,6 +54,8 @@ const settingsBody = z.object({
   connections: z.record(z.string().max(30), z.boolean()),
   automations: z.record(z.string().max(30), z.boolean()),
   dailyReport: z.object({ on: z.boolean(), channel: z.enum(['email', 'whatsapp', 'both']).optional(), emails: z.array(z.string().email()).max(10), phones: z.array(z.string().min(8).max(20)).max(10) }),
+  reminder: z.object({ on: z.boolean(), hours: z.number().int().min(1).max(12).default(3) }),
+  noShows: z.object({ auto: z.boolean(), blockAfter: z.number().int().min(0).max(10).default(0) }),
 }).partial();
 
 export default async function venues(app: FastifyInstance) {

@@ -28,6 +28,8 @@ export type EmailDoc = {
   intro?: string;
   rows?: [label: string, value: string][];
   button?: { label: string; url: string };
+  /** A quiet text link under the button. */
+  secondary?: { label: string; url: string };
   /** QR images, each with a caption (one per ticket or pass). */
   qrs?: { token: string; caption: string; url?: string; wallet?: WalletLinks }[];
   /** Receipt lines under the details; the last one is shown bold as the total. */
@@ -98,6 +100,7 @@ export function renderEmail(d: EmailDoc): string {
         ${receipt ? `<tr><td style="padding-top:18px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f7f8fb;border-radius:10px;padding:12px 16px">${receipt}</table></td></tr>` : ''}
         ${d.button ? `<tr><td style="padding-top:24px"><table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background:${color};border-radius:10px">
           <a href="${esc(d.button.url)}" style="display:inline-block;padding:14px 26px;color:#ffffff;font-size:15px;font-weight:700;text-decoration:none">${esc(d.button.label)}</a></td></tr></table></td></tr>` : ''}
+        ${d.secondary ? `<tr><td style="padding-top:14px;font-size:14px"><a href="${esc(d.secondary.url)}" style="color:#5b6280">${esc(d.secondary.label)}</a></td></tr>` : ''}
         ${qrs}
         ${d.note ? `<tr><td style="padding-top:20px;color:#6b7190;font-size:13px;line-height:1.6">${esc(d.note)}</td></tr>` : ''}
       </table>
@@ -124,6 +127,7 @@ export function renderText(d: EmailDoc): string {
   for (const [k, v] of d.rows ?? []) out.push(`${k}: ${v}`);
   if (d.receipt?.length) { out.push(''); for (const [k, v] of d.receipt) out.push(`${k}: ${v}`); }
   if (d.button) out.push('', `${d.button.label}: ${d.button.url}`);
+  if (d.secondary) out.push(`${d.secondary.label}: ${d.secondary.url}`);
   for (const q of d.qrs ?? []) {
     if (q.url) out.push(`${q.caption}: ${q.url}`);
     if (q.wallet?.apple) out.push(`  Add to Apple Wallet: ${q.wallet.apple}`);

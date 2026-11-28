@@ -26,6 +26,7 @@ import dailyReport from './modules/daily-report.js';
 import kitchen from './modules/kitchen.js';
 import shift from './modules/shift.js';
 import promoters from './modules/promoters.js';
+import reminders from './modules/reminders.js';
 import accounts from './modules/accounts.js';
 import legal from './modules/legal.js';
 import inbox, { unsubscribePage, whatsappWebhook } from './modules/inbox.js';
@@ -53,7 +54,7 @@ export async function buildApp(opts: FastifyServerOptions = {}) {
   app.get('/health', async () => ({ ok: true }));
 
   await app.register(async (api) => {
-    for (const m of [auth, admin, venues, reservations, tabs, ticketing, publicRoutes, passRoutes, crm, automations, media, reports, inbox, refunds, waitlist, dailyReport, accounts, kitchen, shift, promoters]) await api.register(m);
+    for (const m of [auth, admin, venues, reservations, tabs, ticketing, publicRoutes, passRoutes, crm, automations, media, reports, inbox, refunds, waitlist, dailyReport, accounts, kitchen, shift, promoters, reminders]) await api.register(m);
   }, { prefix: '/api' });
   await app.register(payments);
   await app.register(mediaFiles);

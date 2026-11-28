@@ -54,6 +54,10 @@ export type VenueSettings = {
   automations?: Record<string, boolean>;
   /** Morning summary of last night for the owner. Off unless switched on. */
   dailyReport?: { on: boolean; channel?: 'email' | 'whatsapp' | 'both'; emails: string[]; phones: string[] };
+  /** Day-of reminder, `hours` before the booking time. Off unless switched on. */
+  reminder?: { on: boolean; hours: number };
+  /** Morning after: confirmed bookings nobody checked in for become no-shows; block a guest after `blockAfter` (0 = never). */
+  noShows?: { auto: boolean; blockAfter: number };
 };
 
 export const notifyChannel = pgEnum('notify_channel', ['email', 'whatsapp', 'both']);
