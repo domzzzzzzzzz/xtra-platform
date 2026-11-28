@@ -51,7 +51,7 @@ export type VenueSettings = {
   connections?: Record<string, boolean>;
   automations?: Record<string, boolean>;
   /** Morning summary of last night for the owner. Off unless switched on. */
-  dailyReport?: { on: boolean; emails: string[]; phones: string[] };
+  dailyReport?: { on: boolean; channel?: 'email' | 'whatsapp' | 'both'; emails: string[]; phones: string[] };
 };
 
 export const notifyChannel = pgEnum('notify_channel', ['email', 'whatsapp', 'both']);

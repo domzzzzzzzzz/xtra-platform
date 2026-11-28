@@ -1,7 +1,7 @@
 /**
  * The morning summary: at 10 AM Cairo, last night's numbers go to the people
- * the venue chose in Venue setup (by email, and by WhatsApp once the
- * xtra_daily_report template is approved). Sent once per venue and night.
+ * the venue chose in Venue setup, by email, WhatsApp or both (their choice).
+ * Off until the owner switches it on. Sent once per venue and night.
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -26,15 +26,19 @@ function vs(now: number, before: number, day: string) {
   return p === 0 ? `same as last ${day}` : `${p > 0 ? '▲' : '▼'} ${Math.abs(p)}% vs last ${day}`;
 }
 
-/** Who gets it: the chosen emails, or else the venue owners. */
+/** How it goes out: the venue's choice, both when never chosen. */
+export const reportChannel = (v: Venue) => v.settings.dailyReport?.channel ?? 'both';
+
+/** Who gets it: the chosen emails (or else the venue owners) and numbers, for the chosen channel. */
 async function recipients(v: Venue) {
   const s = v.settings.dailyReport;
-  let emails = s?.emails?.filter(Boolean) ?? [];
-  if (!emails.length) {
+  const ch = reportChannel(v);
+  let emails = ch === 'whatsapp' ? [] : s?.emails?.filter(Boolean) ?? [];
+  if (!emails.length && ch !== 'whatsapp') {
     emails = (await db.select({ e: schema.users.email }).from(schema.venueStaff).innerJoin(schema.users, eq(schema.users.id, schema.venueStaff.userId))
       .where(and(eq(schema.venueStaff.venueId, v.id), eq(schema.venueStaff.role, 'owner')))).map((r) => r.e);
   }
-  return { emails, phones: (s?.phones ?? []).filter(Boolean).map(normalizePhone) };
+  return { emails, phones: ch === 'email' || !waOn('xtra_daily_report') ? [] : (s?.phones ?? []).filter(Boolean).map(normalizePhone) };
 }
 
 /** Last night's numbers for one venue, and what to send. */
@@ -68,7 +72,7 @@ export async function buildDailyReport(v: Venue, day: string) {
     preheader: `${egp(M.total)} in, ${B.covers} guests served.`, title: `Last night at ${v.name}`,
     intro: `Your summary for ${weekday}, ${date}. A night runs until 6 AM.`,
     rows, button: { label: 'Open reports', url: `${config.publicAppUrl}/` },
-    note: 'You get this every morning at 10. Change who gets it in Venue setup.',
+    note: 'You get this every morning at 10. Turn it off or change who gets it in Venue setup.',
   };
   return { quiet, subject, body, doc, wa: { name: 'xtra_daily_report', header: v.name, params: [date, egp(M.total), String(B.covers), String(t.tickets.sold)] } };
 }
@@ -78,7 +82,7 @@ async function sendReport(v: Venue, day: string, kind: string) {
   const to = await recipients(v);
   const parts = emailParts(v, r.doc);
   for (const e of to.emails) await send({ channel: 'email', to: e, kind, subject: r.subject, venueId: v.id, ...parts });
-  if (waOn('xtra_daily_report')) for (const p of to.phones) await send({ channel: 'whatsapp', to: p, kind, body: r.body, venueId: v.id, whatsappTemplate: r.wa });
+  for (const p of to.phones) await send({ channel: 'whatsapp', to: p, kind, body: r.body, venueId: v.id, whatsappTemplate: r.wa });
   return { ...r, to };
 }
 
@@ -94,6 +98,8 @@ export async function runDailyReports(now = new Date()) {
     const kind = `daily_report:${v.id}:${day}`;
     const [done] = await db.select({ id: schema.messages.id }).from(schema.messages).where(eq(schema.messages.kind, kind)).limit(1);
     if (done) continue;
+    const to = await recipients(v);
+    if (!to.emails.length && !to.phones.length) continue;
     const r = await buildDailyReport(v, day);
     if (r.quiet) continue;
     await sendReport(v, day, kind);
@@ -110,6 +116,6 @@ export default async function dailyReport(app: FastifyInstance) {
     const [v] = await db.select().from(schema.venues).where(eq(schema.venues.id, req.params.venueId));
     const day = b.day ?? shift(nightOf(), -1);
     const r = await sendReport(v, day, `daily_report_test:${v.id}:${Date.now()}`);
-    return { day, emails: r.to.emails, phones: waOn('xtra_daily_report') ? r.to.phones : [], subject: r.subject };
+    return { day, emails: r.to.emails, phones: r.to.phones, subject: r.subject };
   });
 }
