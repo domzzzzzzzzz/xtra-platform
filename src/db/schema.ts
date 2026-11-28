@@ -241,6 +241,8 @@ export const reservations = pgTable('reservations', {
   date: date('date').notNull(),
   slotId: uuid('slot_id').references(() => timeSlots.id, { onDelete: 'set null' }),
   slotLabel: text('slot_label').notNull().default(''),
+  /** Came through a promoter's link. */
+  promoterId: uuid('promoter_id'),
   zoneId: uuid('zone_id'),
   tableId: uuid('table_id'),
   partySize: integer('party_size').notNull(),
@@ -383,6 +385,44 @@ export const shiftCloses = pgTable('shift_closes', {
   createdAt: createdAt(),
 }, (t) => [index('shift_closes_venue_idx').on(t.venueId, t.night)]);
 
+/* ---------------------------------------------------------------- promoters */
+
+/**
+ * A promoter brings guests: through their own booking/ticket link (?ref=CODE)
+ * or names they put on the guest list from their private page (/pl/TOKEN).
+ */
+export const promoters = pgTable('promoters', {
+  id: id(),
+  venueId: venueRef(),
+  name: text('name').notNull(),
+  phone: text('phone'),
+  /** In links: /book/venue?ref=KARIM */
+  code: text('code').notNull(),
+  /** Their private guest list page. */
+  token: text('token').notNull(),
+  /** guest: `commission` piastres per guest who came in. percent: `commission` bps of what their guests spent. */
+  commissionKind: text('commission_kind').$type<'guest' | 'percent'>().notNull().default('guest'),
+  commission: integer('commission').notNull().default(0),
+  active: boolean('active').notNull().default(true),
+  createdAt: createdAt(),
+}, (t) => [uniqueIndex('promoters_code_uq').on(t.venueId, t.code), uniqueIndex('promoters_token_uq').on(t.token)]);
+
+/** Names on the door for one night, without a table. */
+export const guestList = pgTable('guest_list', {
+  id: id(),
+  venueId: venueRef(),
+  promoterId: uuid('promoter_id').references(() => promoters.id, { onDelete: 'set null' }),
+  night: date('night').notNull(),
+  name: text('name').notNull(),
+  phone: text('phone'),
+  /** Friends coming with them. */
+  plus: integer('plus').notNull().default(0),
+  note: text('note').notNull().default(''),
+  checkedInAt: timestamp('checked_in_at', { withTimezone: true }),
+  addedBy: uuid('added_by'),
+  createdAt: createdAt(),
+}, (t) => [index('guest_list_night_idx').on(t.venueId, t.night)]);
+
 /* ---------------------------------------------------------------- ticketing */
 
 export const eventStatus = pgEnum('event_status', ['draft', 'published', 'ended', 'cancelled']);
@@ -484,6 +524,7 @@ export const ticketOrders = pgTable('ticket_orders', {
   venueId: venueRef(),
   eventId: uuid('event_id').notNull().references(() => events.id),
   guestId: uuid('guest_id').references(() => guests.id),
+  promoterId: uuid('promoter_id'),
   status: ticketOrderStatus('status').notNull().default('held'),
   holdExpiresAt: timestamp('hold_expires_at', { withTimezone: true }).notNull(),
   promoCodeId: uuid('promo_code_id').references(() => promoCodes.id),

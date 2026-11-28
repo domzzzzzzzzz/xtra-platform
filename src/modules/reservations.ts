@@ -1,3 +1,4 @@
+import { promoterByRef } from './promoters-service.js';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { and, asc, eq, gte, inArray, lte, ne, sql } from 'drizzle-orm';
@@ -39,6 +40,8 @@ export const bookingInput = z.object({
   /** Everyone else coming. Party size = 1 + guests. */
   guests: z.array(person).max(30).default([]),
   note: z.string().max(500).default(''),
+  /** Promoter code from the link (?ref=KARIM). */
+  ref: z.string().trim().max(40).optional(),
 });
 
 /** Sends one catalogue message on the venue's channel(s). */
@@ -102,7 +105,7 @@ export async function createBooking(venue: Venue, input: z.infer<typeof bookingI
     const [res] = await tx.insert(schema.reservations).values({
       code: shortCode(), venueId: venue.id, guestId: guest.id, date: input.date, slotId: slot.id,
       slotLabel: `${slot.startsAt} to ${slot.endsAt}`, zoneId: input.zoneId ?? null, tableId: input.tableId ?? null, partySize, minSpend,
-      guestNote: input.note, qrToken: qrToken(), source,
+      guestNote: input.note, qrToken: qrToken(), source, promoterId: await promoterByRef(tx, venue.id, input.ref),
     }).returning();
 
     const people = [{ ...b, guestId: guest.id, isBooker: true, phone: guest.phone }, ...input.guests.map((g) => ({ ...g, guestId: null as string | null, isBooker: false }))];

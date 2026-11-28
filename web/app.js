@@ -61,7 +61,7 @@ const ebox=el=>{if(!isT(el))return {x:el.x,y:el.y,w:el.w,h:el.h};const f=furn(el
 const mk=(kind,name,x,y,seats,rot=0)=>({id:'e'+(++mk.n),kind,name,x,y,seats,rot});mk.n=0;
 const fx=(kind,name,x,y,w,h)=>({id:'e'+(++mk.n),kind,name,x,y,w,h,rot:0});
 const zn=(area,x,y,w,h)=>({id:'e'+(++mk.n),kind:'zone',area,x,y,w,h,rot:0});
-let VENUES=[],VDATA=[],MENU={},ITEMS={},MENU_ALL=[],ME=null,PLATFORM={bookingFeeBps:500,feeVatBps:1400},LIVE_INT={};
+let VENUES=[],VDATA=[],MENU={},ITEMS={},MENU_ALL=[],PROMS=[],ME=null,PLATFORM={bookingFeeBps:500,feeVatBps:1400},LIVE_INT={};
 let S;
 const V=()=>{if(S&&S.edEvent&&VIEW==='editor'){const e=(S.events||[]).find(x=>x.id===S.edEvent);if(e)return {...VDATA[S.vi],layout:e.layout,areas:e.tz,ev:e}}return VDATA[S.vi]};
 const CFG=()=>V().cfg;
@@ -252,7 +252,9 @@ async function loadVenue(vi,keepUI){
   const evs=events.map(eventFrom);evs.forEach(e=>attachPromos(e,PR));
   const tonightEv=evs.filter(e=>e.status==='live');
   const tickets=(await Promise.all(tonightEv.map(e=>safe(GET(u(`/events/${e.id}/tickets`)))))).flat().map(t=>({id:t.id,code:t.orderCode,name:`${t.firstName} ${t.lastName}`.trim(),type:t.zone,in:!!t.checkedInAt}));
-  S={vi,bookings,guests:G2,orders,glist:[],tickets,events:evs,campaigns:camps.map(campFrom),staff,roles,
+  const [glRaw,proms]=await Promise.all([F.includes('reservations')&&can('door','promoters')?safe(GET(u('/guestlist'))):none,F.includes('reservations')&&can('promoters','bookings')?GET(u('/promoters')).then(r=>r.promoters).catch(()=>[]):none]);
+  PROMS=proms;const glist=glRaw.map(l=>({id:l.id,name:l.name,plus:l.plus,in:!!l.checkedInAt,by:l.promoter||'Venue',note:l.note,promoterId:l.promoterId}));
+  S={vi,bookings,guests:G2,orders,glist,tickets,events:evs,campaigns:camps.map(campFrom),staff,roles,
     autos:[['thanks','Thank you after the visit','Next day at 2 PM, thanks them for coming'],['bday','Birthday offer','7 days before their birthday, invites them back'],['winback','Win back','After 45 days without a visit, invites them to come back']].map(([k,name,desc])=>({k,name,desc,on:!!cfg.autos[k],n:0})),
     bfilter:'request',otable:null,cat:Object.keys(MENU)[0]||null,pay:'Card',gsearch:'',dsearch:'',sheet:null,sel:null,mapMode:'map',gp:newGP(),evSel:null,evp:newEVP(),camp:null,batchOpen:null,edEvent:null,
     ...(ui?{bfilter:ui.bfilter,otable:ui.otable,cat:MENU[ui.cat]?ui.cat:Object.keys(MENU)[0]||null,pay:ui.pay,gsearch:ui.gsearch,dsearch:ui.dsearch,sheet:ui.sheet,sel:ui.sel,gp:ui.gp,evSel:ui.evSel,evp:ui.evp,camp:ui.camp,batchOpen:ui.batchOpen,edEvent:ui.edEvent,sales:ui.sales}:{})};
@@ -287,7 +289,7 @@ const egp2=n=>'EGP'+NB+(Math.round(n*100)/100).toLocaleString('en-US',{maximumFr
 const first=b=>G(b.gid).name.split(' ')[0];
 
 /* ---------- shell ---------- */
-const NAV=[['floor','Floor','floor','Tonight'],['bookings','Bookings','bookings','Tonight'],['door','Door','door','Tonight'],['orders','Orders','orders','Tonight'],['kitchen','Kitchen','kitchen','Tonight'],['events','Events','events','Grow'],['marketing','Marketing','marketing','Grow'],['guests','Guests','guests','Grow'],['community','Community','community','Grow'],['messages','Messages','messages','Grow'],['reports','Reports','reports','Grow'],['page','Booking page','page','Set up'],['menu','Menu','menu','Set up'],['editor','Floor map','editor','Set up'],['setup','Venue setup','setup','Set up'],['admin','XTRA admin','admin','XTRA']];
+const NAV=[['floor','Floor','floor','Tonight'],['bookings','Bookings','bookings','Tonight'],['door','Door','door','Tonight'],['orders','Orders','orders','Tonight'],['kitchen','Kitchen','kitchen','Tonight'],['events','Events','events','Grow'],['marketing','Marketing','marketing','Grow'],['promoters','Promoters','promoters','Grow'],['guests','Guests','guests','Grow'],['community','Community','community','Grow'],['messages','Messages','messages','Grow'],['reports','Reports','reports','Grow'],['page','Booking page','page','Set up'],['menu','Menu','menu','Set up'],['editor','Floor map','editor','Set up'],['setup','Venue setup','setup','Set up'],['admin','XTRA admin','admin','XTRA']];
 /** What this person may open at the current venue (from /auth/me, already limited by the venue's features). */
 const PERMS_NOW=()=>ME.venues[S.vi]?.perms||[],FEAT_NOW=()=>ME.venues[S.vi]?.features||[];
 const CAN=p=>p==='admin'?!!ME.user.isSuperAdmin:p==='page'?PERMS_NOW().includes('setup')&&FEAT_NOW().includes('reservations'):p==='menu'?PERMS_NOW().includes('setup')&&FEAT_NOW().includes('ordering'):PERMS_NOW().includes(p);
@@ -295,7 +297,7 @@ const HAS=f=>FEAT_NOW().includes(f);
 const ROLES={manager:'Manager',door:'Door',waiter:'Waiter'};
 const ROLE_NAME={owner:'Owner',manager:'Manager',door:'Door',waiter:'Waiter'};
 const whoBox=()=>`<div class="role">Signed in</div><div class="who"><b>${esc(ME.user.name)}</b><span class="mute">${esc(ME.user.isSuperAdmin?'XTRA admin':ME.venues[S.vi]?.roleName||ROLE_NAME[VENUES[S.vi].role]||'')}</span></div><button class="btn ghost sm" data-a="signout">Sign out</button>`;
-const MORE=['events','marketing','community','messages','reports','page','menu','editor','setup','admin'];
+const MORE=['events','marketing','promoters','community','messages','reports','page','menu','editor','setup','admin'];
 function shell(){
   const VV=VENUES[S.vi],navs=NAV.filter(n=>CAN(n[2]));ROLE=navs.length>5?'manager':'staff';
   if(!navs.length){$('#rail').innerHTML=`${LOGO}<div class="sp"></div>${whoBox()}`;$('#tabs').innerHTML='';$('#mbar').innerHTML=LOGO;return}
@@ -577,7 +579,7 @@ gparea:v=>{const gp=S.gp;gp.area=v;if(gp.table&&pubEL(gp.table)?.zone!==v)gp.tab
 gptable:v=>{const gp=S.gp,t=pubEL(v);if(t.seats<gp.party){toast(`Table ${t.name} has ${t.seats} seats. Pick a bigger one or fewer guests.`);return}gp.table=gp.table===v?null:v;if(gp.table&&t.zone)gp.area=t.zone;render()},
 gpsubmit:async()=>{const gp=S.gp,f=gp.f;if(gp.busy)return;gp.busy=true;gp.err='';render();
   const P=o=>({name:o.name.trim(),...(o.phone.trim()?{phone:o.phone.trim()}:{}),...(/^\S+@\S+\.\S+$/.test(o.email)?{email:o.email.trim()}:{}),...(o.ig.trim()?{instagram:o.ig.trim().replace(/^@/,'')}:{}),...(o.gender?{gender:o.gender.toLowerCase()}:{})});
-  try{const r=await pubPost(`/venues/${PUB.slug}/bookings`,{date:PDAYS[gp.day][3],slotId:gp.slot,...(gp.area?{zoneId:gp.area}:{}),...(gp.table?{tableId:gp.table}:{}),partySize:gp.party,
+  try{const r=await pubPost(`/venues/${PUB.slug}/bookings`,{...(REF()?{ref:REF()}:{}),date:PDAYS[gp.day][3],slotId:gp.slot,...(gp.area?{zoneId:gp.area}:{}),...(gp.table?{tableId:gp.table}:{}),partySize:gp.party,
       booker:{...P(f),whatsappOptIn:!!f.consent,emailOptIn:!!f.consent},guests:PUB.info.askNames?gp.others.map(P):[]});
     gp.code=r.code;gp.step='status';gp.busy=false;PUB.days={};
     if(GUEST)history.replaceState(null,'','/b/'+r.code);
@@ -626,7 +628,7 @@ function vSetup(){
 const POWERED='<footer class="powered"><span>Powered by</span><img src="/web/brand/xtra-gray.png" alt="XTRA" width="45" height="10"></footer>';
 /** "Powered by XTRA" at the very bottom of every scrolling page (staff screens, guest screens, phone previews). */
 function powered(){document.querySelectorAll('#main,.gscroll').forEach(el=>{if(!el.querySelector(':scope>.powered'))el.insertAdjacentHTML('beforeend',POWERED)})}
-function render(){if(!GUEST&&S&&ME&&!NAV.some(n=>CAN(n[2]))){shell();$('#main').innerHTML='<div class="loading">Your role has no screens at this venue yet. Ask your manager to give it some.</div>';return}if(GUEST){const g=document.querySelector('#guest .gscroll'),st=g?.scrollTop;$('#guest').innerHTML=guestView();const g2=document.querySelector('#guest .gscroll');powered();if(st&&g2)g2.scrollTop=st;return}if(!S||!ME)return;shell();const VW={floor:vFloor,bookings:vBookings,door:vDoor,orders:vOrders,kitchen:vKitchen,menu:vMenu,guests:vGuests,page:vPage,setup:vSetup,editor:vEditor,events:vEvents,marketing:vMarketing,community:vCommunity,reports:vReports,messages:vMessages,admin:vAdmin}[VIEW];const gs=$('#gscroll')?.scrollTop;$('#main').innerHTML=VW();powered();drawMap();if(gs&&$('#gscroll'))$('#gscroll').scrollTop=gs;if(S.sheet)openSheet(S.sheet,true)}
+function render(){if(!GUEST&&S&&ME&&!NAV.some(n=>CAN(n[2]))){shell();$('#main').innerHTML='<div class="loading">Your role has no screens at this venue yet. Ask your manager to give it some.</div>';return}if(GUEST){const g=document.querySelector('#guest .gscroll'),st=g?.scrollTop;$('#guest').innerHTML=guestView();const g2=document.querySelector('#guest .gscroll');powered();if(st&&g2)g2.scrollTop=st;return}if(!S||!ME)return;shell();const VW={floor:vFloor,bookings:vBookings,door:vDoor,orders:vOrders,kitchen:vKitchen,menu:vMenu,promoters:vPromoters,guests:vGuests,page:vPage,setup:vSetup,editor:vEditor,events:vEvents,marketing:vMarketing,community:vCommunity,reports:vReports,messages:vMessages,admin:vAdmin}[VIEW];const gs=$('#gscroll')?.scrollTop;$('#main').innerHTML=VW();powered();drawMap();if(gs&&$('#gscroll'))$('#gscroll').scrollTop=gs;if(S.sheet)openSheet(S.sheet,true)}
 
 /* ---------- sheets ---------- */
 function qrSVG(txt){try{const q=qrcode(0,'M');q.addData(txt);q.make();const n=q.getModuleCount();let p='';for(let r=0;r<n;r++)for(let c=0;c<n;c++)if(q.isDark(r,c))p+=`M${c} ${r}h1v1h-1z`;return `<svg viewBox="0 0 ${n} ${n}" shape-rendering="crispEdges"><path d="${p}" fill="#12153f"/></svg>`}catch(e){return `<div style="width:132px;height:132px;display:grid;place-items:center;color:#12153f;font-weight:800;line-height:1.2">${esc(txt)}</div>`}}
@@ -660,7 +662,7 @@ function openSheet(d,refresh){
     <div style="border-top:1px solid var(--line);margin:8px 0"></div><div class="sum"><span>Subtotal</span><span class="num">${egp(bl.sub)}</span></div>${bl.top?`<div class="sum"><span>Minimum spend top-up</span><span class="num">${egp(bl.top)}</span></div>`:''}<div class="sum"><span>Service 12%</span><span class="num">${egp(bl.svc)}</span></div><div class="sum"><span>VAT 14%</span><span class="num">${egp(bl.vat)}</span></div>${bl.dep?`<div class="sum neg"><span>Deposit paid (${esc(b.depVia)})</span><span class="num">−${egp(bl.dep)}</span></div>`:''}<div class="sum tot"><span>To pay</span><span class="num">${egp(bl.total)}</span></div>
     ${bl.top?`<p class="sent">The table is ${egp(bl.top)} under the ${egp(bl.min)} minimum. Add more to the order or charge the top-up.</p>`:''}
     ${payBox(b,o,bl)}`;}
-  if(d.k==='new'){title='New booking';body=`<form id="newb" class="stack" style="margin-top:0"><label class="f">Guest name<input id="nname" required autocomplete="off" placeholder="Full name"></label><div class="two"><div class="f telf">WhatsApp${telField({id:'nphone',req:true,label:'WhatsApp number'})}</div><label class="f">Instagram<input id="nig" autocomplete="off" placeholder="@handle"></label></div><label class="f">Email<input id="nemail" type="email" autocomplete="off" placeholder="Optional"></label><div class="two"><label class="f">Time<select id="ntime">${slots().map(m=>`<option value="${m}">${t12(m)}</option>`).join('')}</select></label><label class="f">Guests<input id="nparty" type="number" min="1" max="20" value="4" inputmode="numeric"></label></div><label class="f">Area<select id="narea">${V().areas.map(a=>`<option value="${a.id}">${esc(a.name)} · min ${egp(a.min)}</option>`).join('')}</select></label><label class="f">Deposit<select id="ndep"><option value="link">Send payment link</option><option value="paid">Already paid</option><option value="none">No deposit</option></select></label><label class="f">Source<select id="nsrc">${['Phone call','WhatsApp','Instagram','Promoter · Karim','Concierge'].map(s=>`<option>${s}</option>`).join('')}</select></label><label class="f">Note<input id="nnote" autocomplete="off" placeholder="Birthday, allergies, preferred table"></label><button class="btn" type="submit">Book and notify guest</button><p class="sent" style="margin:0">We pick the best free table in the area and message the guest by ${{both:'email and WhatsApp',wa:'WhatsApp',email:'email'}[CFG().notify]}.</p></form>`}
+  if(d.k==='new'){title='New booking';body=`<form id="newb" class="stack" style="margin-top:0"><label class="f">Guest name<input id="nname" required autocomplete="off" placeholder="Full name"></label><div class="two"><div class="f telf">WhatsApp${telField({id:'nphone',req:true,label:'WhatsApp number'})}</div><label class="f">Instagram<input id="nig" autocomplete="off" placeholder="@handle"></label></div><label class="f">Email<input id="nemail" type="email" autocomplete="off" placeholder="Optional"></label><div class="two"><label class="f">Time<select id="ntime">${slots().map(m=>`<option value="${m}">${t12(m)}</option>`).join('')}</select></label><label class="f">Guests<input id="nparty" type="number" min="1" max="20" value="4" inputmode="numeric"></label></div><label class="f">Area<select id="narea">${V().areas.map(a=>`<option value="${a.id}">${esc(a.name)} · min ${egp(a.min)}</option>`).join('')}</select></label><label class="f">Deposit<select id="ndep"><option value="link">Send payment link</option><option value="paid">Already paid</option><option value="none">No deposit</option></select></label><label class="f">Source<select id="nsrc">${['Phone call','WhatsApp','Instagram','Concierge'].map(s=>`<option>${s}</option>`).join('')}${PROMS.filter(p=>p.active).map(p=>`<option value="ref:${esc(p.code)}">Promoter · ${esc(p.name)}</option>`).join('')}</select></label><label class="f">Note<input id="nnote" autocomplete="off" placeholder="Birthday, allergies, preferred table"></label><button class="btn" type="submit">Book and notify guest</button><p class="sent" style="margin:0">We pick the best free table in the area and message the guest by ${{both:'email and WhatsApp',wa:'WhatsApp',email:'email'}[CFG().notify]}.</p></form>`}
   if(d.k==='guest'){const g=G(d.id),hist=S.bookings.filter(b=>b.gid===g.id);title=esc(g.name);
     body=`<p style="margin:0 0 6px"><span class="tag" style="background:${tierOf(g).color};color:var(--chipink)">${tierOf(g).name}</span> <span class="mute">${points(g).toLocaleString('en-US')} points</span></p><p class="mute num" style="margin:0">${esc(g.phone)} · ${esc(g.email||'no email')} · ${esc(g.ig||'')}</p><div class="facts"><div><span>Visits</span><b>${g.visits}</b></div><div><span>Total spend</span><b class="num">${egp(g.spend)}</b></div><div><span>Last visit</span><b>${g.last}</b></div><div><span>No-shows</span><b>${g.noShow}</b></div></div>
     <h3>Tags</h3><div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 16px">${['VIP','Regular','Birthday','Blocked'].map(t=>`<button class="chip ${g.tags.includes(t)?'on':''}" data-a="gtag" data-v="${g.id}:${t}">${t}</button>`).join('')}</div>
@@ -671,7 +673,7 @@ function openSheet(d,refresh){
   if(d.k==='more'){title='More';body=`<div class="stack" style="margin-top:0">${ROLE==='manager'?NAV.filter(n=>MORE.includes(n[0])&&CAN(n[2])).map(([k,l])=>`<button class="btn ghost wide" style="justify-content:flex-start" data-a="go" data-v="${k}">${ic(k)}${l}</button>`).join(''):''}<div style="margin-top:12px">${whoBox()}</div></div>`}
   if(d.k==='venue'){title='Your venues';body=`<p class="mute" style="margin:0 0 12px">One XTRA account, many venues. Each has its own floor map, slots, staff and booking link.</p><div class="stack" style="margin-top:0">${ME.venues.map((v,i)=>`<button class="btn ${i===S.vi?'':'ghost'} wide" style="justify-content:space-between" data-a="setvenue" data-v="${i}"><span>${esc(v.name)}</span><span style="font-weight:400;opacity:.8">${esc(ME.user.isSuperAdmin?(v.active===false?'Paused':''):v.roleName||ROLE_NAME[v.role]||'')}</span></button>`).join('')}</div>
     ${ME.user.isSuperAdmin?`<button class="btn ghost wide" style="margin-top:16px" data-a="go" data-v="admin">${ic('admin')}New venue, roles and accounts in XTRA admin</button>`:''}`}
-  if(!title){const r=orderSheet(d)||shiftSheet(d);if(r){title=r[0];body=r[1]}}
+  if(!title){const r=orderSheet(d)||shiftSheet(d)||prSheet(d);if(r){title=r[0];body=r[1]}}
   if(!title){const r=growthSheet(d);if(r){title=r[0];body=r[1]}}
   const sh=$('#sheet'),st=sh.querySelector('.bd')?.scrollTop||0;
   sh.innerHTML=`<div class="hd"><h2 id="sheetTitle">${title}</h2><button class="x" data-a="close" aria-label="Close">×</button></div><div class="bd">${body}</div>`;
@@ -733,7 +735,7 @@ noshow:v=>act(()=>POST(vurl(`/reservations/${v}/no-show`)),'Marked as no-show. T
 seat:v=>{const b=B(v),tableId=b.table||autoTable(b.area,b.party);if(!tableId){toast('No free table in this area. Pick one on the floor.');return}
   act(()=>POST(vurl(`/reservations/${v}/seat`),{tableId}),`${first(b)} seated at ${TN(tableId)}`)},
 toorder:v=>{S.otable=v;ACT.go('orders')},
-checkin:v=>{const [k,id]=v.split(':');act(()=>POST(vurl('/checkin/manual'),k==='t'?{ticketId:id}:{reservationId:id}),r=>r.ok?`${r.name} checked in${r.type==='booking'&&r.table?' · Table '+r.table:''}`:checkinWhy(r))},
+checkin:v=>{const [k,id]=v.split(':');act(()=>k==='l'?POST(vurl(`/guestlist/${id}/checkin`)):POST(vurl('/checkin/manual'),k==='t'?{ticketId:id}:{reservationId:id}),r=>r.ok?`${r.name} checked in${r.type==='booking'&&r.table?' · Table '+r.table:''}`:checkinWhy(r))},
 scan:()=>{closeCam();openSheet({k:'scan'})},
 otable:v=>{S.otable=v;render()},
 cat:v=>{S.cat=v;render()},
@@ -806,7 +808,7 @@ document.addEventListener('submit',async e=>{e.preventDefault();const f=e.target
   if(f.id==='newb'){const m=+$('#ntime').value,slotId=slotIdFor(m);if(!slotId){toast('That time is not set up. Check Venue setup.');return}
     const r=await act(()=>POST(vurl('/reservations'),{date:DAYS[0][3],slotId,zoneId:VDATA[S.vi].areas.some(a=>a.id===$('#narea').value&&/^[0-9a-f]{8}-/.test(a.id))?$('#narea').value:undefined,
       partySize:Math.max(1,+$('#nparty').value||2),booker:{name:val('nname'),phone:telRead('nphone'),...(val('nemail')?{email:val('nemail')}:{}),...(val('nig')?{instagram:val('nig')}:{})},
-      depositMode:$('#ndep').value,source:$('#nsrc').value,note:val('nnote')}),r=>`Booked. ${val('nname').split(' ')[0]} was told by ${chWord()}.`);
+      depositMode:$('#ndep').value,...($('#nsrc').value.startsWith('ref:')?{source:'Promoter',ref:$('#nsrc').value.slice(4)}:{source:$('#nsrc').value}),note:val('nnote')}),r=>`Booked. ${val('nname').split(' ')[0]} was told by ${chWord()}.`);
     if(r){S.bfilter=r.status==='accepted'?'accepted':'confirmed';render();openSheet({k:'booking',id:r.id})}}
   if(f.id==='walkin'){const tid=$('#wtable').value,t=EL(tid),party=+$('#wparty').textContent,name=val('wname')||'Walk-in '+t.name,phone=telRead('wphone');
     const r=await act(()=>POST(vurl('/tabs'),{tableId:tid,guestName:name,partySize:party,...(phone.length>=10?{phone}:{})}),`${name} seated at ${t.name}`);if(r)openSheet({k:'table',id:tid})}
@@ -1200,7 +1202,7 @@ let holdQ=Promise.resolve();
 function syncHold(){const P=S.evp,e=curEv();if(!e||!e.pub||P.queued)return;P.queued=true;
   holdQ=holdQ.then(async()=>{P.queued=false;if(S.evp!==P)return;const items=holdItems(e);
     try{
-      if(!P.order){if(!items.length)return;const o=await pubPost(`/events/${e.id}/hold`,{items});
+      if(!P.order){if(!items.length)return;const o=await pubPost(`/events/${e.id}/hold`,{items,...(REF()?{ref:REF()}:{})});
         if(S.evp!==P){pubPost(`/orders/${o.code}/release`).catch(()=>{});return}P.order=o;startHold(o.secondsLeft);toast(`Held for you for ${Math.round(o.secondsLeft/60)} minutes`)}
       else{const o=await pubPut(`/orders/${P.order.code}/items`,{items});if(S.evp!==P)return;
         if(o.status!=='held'){P.order=null;clearInterval(holdTimer);P.hold=0}else{P.order=o;startHold(o.secondsLeft)}}
@@ -1467,6 +1469,7 @@ function guestView(){const G2=GUEST;
   if(G2.err)return guestShell(`<div class="gdone"><h2 style="font-size:22px">Not found</h2><p style="margin:0;color:#5b6280">${esc(G2.err)}</p></div>`);
   if(G2.kind==='book'||G2.kind==='status')return G2.slug?guestPhone():guestShell('<div class="loading">Loading…</div>');
   if(G2.kind==='event'){const e=PEV[G2.eventId];return e?evPhone(e):guestShell('<div class="loading">Loading…</div>')}
+  if(G2.kind==='promoter')return plPage();
   if(G2.kind==='order')return G2.order?guestShell(orderScreen(G2.order)):guestShell('<div class="loading">Loading…</div>');
   if(G2.kind==='pass')return G2.pass?guestShell(passScreen(G2.pass)):guestShell('<div class="loading">Loading…</div>');
   if(G2.kind==='me'){if(!ACCT.view)ACCT.view=ACCT.user?'home':'login';return guestShell(`<div class="evtop"><span class="vlogo mono" style="width:38px;height:38px;font-size:15px">X</span><b>Your XTRA account</b></div>${acctScreen()}`)}
@@ -1474,9 +1477,9 @@ function guestView(){const G2=GUEST;
   return guestShell('');
 }
 async function bootGuest(path){
-  const [,k,a]=path.split('/');document.body.classList.add('guestmode');$('#guest').hidden=false;
+  const [,k,a]=path.split('/');REF();document.body.classList.add('guestmode');$('#guest').hidden=false;
   VENUES=[];S={vi:0,gp:newGP(),evp:newEVP(),sheet:null,events:[],bookings:[],guests:[],orders:{}};
-  const map={book:'book',b:'status',e:'event',o:'order',t:'pass',p:'pass',me:'me',paid:'paid'};GUEST={kind:map[k]||'paid'};if(GUEST.kind==='book')GUEST.slug=decodeURIComponent(a);
+  const map={book:'book',b:'status',e:'event',o:'order',t:'pass',p:'pass',me:'me',paid:'paid',pl:'promoter'};GUEST={kind:map[k]||'paid'};if(GUEST.kind==='book')GUEST.slug=decodeURIComponent(a);
   await loadMe();render();
   try{
     if(GUEST.kind==='status'){const st=await pubGet(`/bookings/${a}`);GUEST.slug=st.venue.slug;S.gp.code=st.code;S.gp.step='status';S.gp.st=st;loadStatus()}
@@ -1484,14 +1487,15 @@ async function bootGuest(path){
     if(GUEST.kind==='order'){const o=await pubGet(`/orders/${a}`);GUEST.order=o;GUEST.eventId=o.eventId;loadPubEvent(o.eventId).then(render).catch(()=>{});
       if(o.status==='held'){const tick=async()=>{try{GUEST.order=await pubGet(`/orders/${a}`);render();if(GUEST.order.status==='held')setTimeout(tick,3000)}catch(_){}};setTimeout(tick,3000)}}
     if(GUEST.kind==='pass'){GUEST.pass=await pubGet(`/pass/${a}`)}
+    if(GUEST.kind==='promoter')await plLoad();
   }catch(e){GUEST.err=e.status===404||e.status===400?'This link is not valid any more.':e.message}
   render()}
 
 
 /* ================= XTRA admin: venues, features, roles, accounts ================= */
 const FEAT_INFO=[['reservations','Reservations','Booking page, bookings, door check-in'],['ordering','Ordering and bills','Orders by table, bills with minimum spend'],['ticketing','Tickets and events','Ticket pages, seat maps, promo codes'],['marketing','Marketing','WhatsApp and email campaigns, automatic messages'],['guests','Guest list','Guest profiles, notes and tags'],['community','Community','Member tiers, points and perks']];
-const PERM_INFO=[['floor','Floor','Tonight\'s map and tables'],['bookings','Bookings','Accept, decline and add bookings'],['door','Door','Scan passes and tickets, check guests in'],['orders','Orders and bills','Take orders, close bills'],['events','Events','Events, ticket prices, promo codes'],['marketing','Marketing','Send campaigns'],['guests','Guests','Guest list, notes and tags'],['community','Community','Tiers and points'],['editor','Floor map','Draw and change the floor map'],['setup','Venue setup','Slots, areas, booking page, logo'],['staff','Staff and roles','Add staff, make roles'],['reports','Reports','Money, bookings, no-shows, top guests'],['messages','Messages','WhatsApp chats with guests, message history'],['kitchen','Kitchen','Kitchen and bar tickets, mark them ready']];
-const PERM_FEAT={bookings:'reservations',door:'reservations',orders:'ordering',kitchen:'ordering',events:'ticketing',marketing:'marketing',guests:'guests',community:'community'};
+const PERM_INFO=[['floor','Floor','Tonight\'s map and tables'],['bookings','Bookings','Accept, decline and add bookings'],['door','Door','Scan passes and tickets, check guests in'],['orders','Orders and bills','Take orders, close bills'],['events','Events','Events, ticket prices, promo codes'],['marketing','Marketing','Send campaigns'],['guests','Guests','Guest list, notes and tags'],['community','Community','Tiers and points'],['editor','Floor map','Draw and change the floor map'],['setup','Venue setup','Slots, areas, booking page, logo'],['staff','Staff and roles','Add staff, make roles'],['reports','Reports','Money, bookings, no-shows, top guests'],['messages','Messages','WhatsApp chats with guests, message history'],['kitchen','Kitchen','Kitchen and bar tickets, mark them ready'],['promoters','Promoters','Promoters, their links, guest list and commission']];
+const PERM_FEAT={bookings:'reservations',door:'reservations',orders:'ordering',kitchen:'ordering',promoters:'reservations',events:'ticketing',marketing:'marketing',guests:'guests',community:'community'};
 const BUILTIN=[['owner','Owner'],['manager','Manager'],['door','Door'],['waiter','Waiter']];
 /** Options for a role picker: built-in roles, then the venue's own roles (value "r:<id>"). */
 function roleOptions(R,cur){const own=(R?.roles||[]);
@@ -1589,7 +1593,7 @@ loadVenue=async(vi,keep)=>{await _loadVenue(vi,keep);if(!keep)await afterLoad()}
 
 /* ---------- start ---------- */
 (()=>{const p=location.pathname;
-  if(/^\/(book|b|e|o|t|p)\/[^/]+$/.test(p)||p==='/me'||p==='/paid')return bootGuest(p);
+  if(/^\/(book|b|e|o|t|p|pl)\/[^/]+$/.test(p)||p==='/me'||p==='/paid')return bootGuest(p);
   if(TOKEN)bootStaff();else loginScreen()})();
 
 /* Pinch the event seat map to zoom: the SVG resizes live, the zoom is saved when the fingers lift. */
@@ -1913,3 +1917,70 @@ shprint:()=>{const D=SH.data;if(!D)return;const f=document.createElement('iframe
 document.addEventListener('input',e=>{if(e.target.id!=='shcount'||!SH.data)return;SH.count=e.target.value;const cash=SH.data.byMethod.cash||0,el=$('#shdiff');if(!el)return;
   if(SH.count===''){el.className='shdiff';el.textContent=`Should be ${egp2(cash/100)}.`;return}const diff=Math.round(parseFloat(SH.count)*100)-cash;
   el.className='shdiff '+(diff===0?'ok':diff<0?'short':'over');el.textContent=diff===0?'Matches. Nothing missing.':diff<0?`Short by ${egp2(-diff/100)}.`:`Over by ${egp2(diff/100)}.`});
+
+/* ---------- promoters and the guest list ---------- */
+/** Promoter code from the link (?ref=KARIM), kept for this visit. */
+function REF(){try{const q=new URLSearchParams(location.search).get('ref');if(q)sessionStorage.setItem('xtra.ref',q);return q||sessionStorage.getItem('xtra.ref')}catch(_){return null}}
+Object.assign(ICON,{promoters:'<circle cx="8" cy="8" r="3.2"/><path d="M2.5 19c.6-3.3 2.7-5 5.5-5s4.9 1.7 5.5 5"/><path d="M15 7.5l6-3v11l-6-3z"/>'});
+const PR={add:false};
+const comm=p=>p.commissionKind==='percent'?`${(p.commission/100).toLocaleString('en-US')}% of spend`:p.commission?`${egp(p.commission/100)} a guest`:'No commission';
+const bookLink=p=>`${location.origin}/book/${VENUES[S.vi].slug}?ref=${p.code}`,listLink=p=>`${location.origin}/pl/${p.token}`;
+function vPromoters(){const L=PROMS,on=L.filter(p=>p.active),inN=L.reduce((s,p)=>s+p.stats.guestsIn,0),owe=L.reduce((s,p)=>s+p.stats.owed,0);
+  const gl=S.glist,glIn=gl.filter(l=>l.in).reduce((s,l)=>s+1+l.plus,0),glN=gl.reduce((s,l)=>s+1+l.plus,0);
+  return head('Promoters','Each promoter gets a booking link and a private page to put names on the door list.',`<button class="btn" data-a="pradd">Add promoter</button>`)+
+  `<div class="kpis"><div class="kpi"><b class="num">${on.length}</b><span>active promoters</span></div><div class="kpi"><b class="num">${inN}</b><span>guests they brought, 30 days</span></div><div class="kpi"><b class="num">${egp(owe/100)}</b><span>commission, 30 days</span></div><div class="kpi"><b class="num">${glIn}/${glN}</b><span>on tonight's list are in</span></div></div>
+  <div class="gp prgrid"><div class="bigbox scroll">${L.length?`<table class="gtable"><thead><tr><th>Promoter</th><th class="num">Guests in</th><th class="num hide">Bookings</th><th class="num hide">Tickets</th><th class="num hide">Spend</th><th class="num">Owed</th></tr></thead><tbody>${L.map(p=>`<tr data-a="pred" data-v="${p.id}" style="cursor:pointer" tabindex="0" ${p.active?'':'class="off"'}><td><b>${esc(p.name)}</b><br><span class="mute" style="font-size:13px">${esc(p.code)} · ${comm(p)}${p.active?'':' · off'}</span></td><td class="num">${p.stats.guestsIn}</td><td class="num hide">${p.stats.bookings}</td><td class="num hide">${p.stats.tickets}</td><td class="num hide">${egp(p.stats.spend/100)}</td><td class="num"><b>${egp(p.stats.owed/100)}</b></td></tr>`).join('')}</tbody></table><p class="mute" style="font-size:13px;margin:10px 0 0">Last 30 days. Guests in = booked guests who arrived, names on the list who came, and tickets sold through their link.</p>`:`<div class="empty">No promoters yet. Add one and send them their links on WhatsApp.</div>`}</div>
+  <div class="bigbox"><h3>Tonight's guest list</h3><p class="mute" style="font-size:14px;margin:4px 0 10px">The door sees these names and checks them in.</p>
+  <form id="gladd" class="gladd"><input class="search" id="glname" placeholder="Name" autocomplete="off" required minlength="2" style="margin:0"><select id="glplus" aria-label="Friends with them">${[0,1,2,3,4,5,6,8,10].map(n=>`<option value="${n}">${n?'+'+n:'Alone'}</option>`).join('')}</select><select id="glprom" aria-label="Promoter"><option value="">Venue</option>${on.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select><button class="btn sm" type="submit">Add</button></form>
+  <div class="list">${gl.map(l=>`<div class="row" style="grid-template-columns:minmax(0,1fr) auto"><span><span class="n">${esc(l.name)}${l.plus?' +'+l.plus:''}</span><span class="s">${esc(l.by)}</span></span><div class="acts">${l.in?'<span class="pill p-arrived">In</span>':`<button class="x sm" data-a="gldel" data-v="${l.id}" aria-label="Take ${esc(l.name)} off the list">×</button>`}</div></div>`).join('')||'<div class="empty" style="padding:16px 0">No names yet tonight.</div>'}</div></div></div>`}
+function prSheet(d){if(d.k!=='prom')return null;const p=d.id?PROMS.find(x=>x.id===d.id):null,P=S.pred;
+  return [p?esc(p.name):'New promoter',`<form id="promf" class="stack" style="margin-top:0"><label class="f">Name<input id="prname" required minlength="2" maxlength="60" value="${esc(P.name)}" autocomplete="off"></label>
+  <div class="f telf">WhatsApp${telField({id:'prphone',value:P.phone||'',ph:'Optional'})}</div>
+  <div class="f" style="display:flex;flex-direction:column;gap:6px;font-size:14px;font-weight:600">Commission<div class="seg" style="align-self:flex-start">${[['guest','Per guest'],['percent','% of spend']].map(([k,l])=>`<button type="button" class="${P.kind===k?'on':''}" data-a="prkind" data-v="${k}">${l}</button>`).join('')}</div></div>
+  <label class="f">${P.kind==='percent'?'Percent of what their guests spend':'EGP for each guest who comes in'}<input id="prcomm" type="number" min="0" step="${P.kind==='percent'?'0.5':'1'}" inputmode="decimal" value="${P.comm}"></label>
+  ${p?`<label class="f">Link code<input id="prcode" maxlength="12" pattern="[A-Za-z0-9]{2,12}" value="${esc(p.code)}" autocomplete="off"></label>`:''}
+  <button class="btn teal" type="submit">${p?'Save':'Add promoter'}</button></form>
+  ${p?`<h3 style="margin-top:20px">Their links</h3>
+  <div class="plink"><div><b>Booking link</b><span>${esc(bookLink(p))}</span><small class="mute">Tables and tickets booked through it count for ${esc(p.name.split(' ')[0])}. Add <b>?ref=${esc(p.code)}</b> to any event link too.</small></div><button class="btn ghost sm" data-a="prcopy" data-v="book">Copy</button></div>
+  <div class="plink"><div><b>Guest list page</b><span>${esc(listLink(p))}</span><small class="mute">Private. ${esc(p.name.split(' ')[0])} adds names for tonight and sees who came and what they earned.</small></div><button class="btn ghost sm" data-a="prcopy" data-v="list">Copy</button></div>
+  ${p.phone?`<a class="btn ghost wide" target="_blank" rel="noopener" href="https://wa.me/${p.phone.replace(/\D/g,'')}?text=${encodeURIComponent(`Hi ${p.name.split(' ')[0]}, your links for ${VENUES[S.vi].name}:\nBookings: ${bookLink(p)}\nGuest list: ${listLink(p)}`)}">${ic('wa')}Send links on WhatsApp</a>`:''}
+  <div class="conn" style="margin-top:10px"><span><b>${p.active?'Active':'Off'}</b><br><span class="mute" style="font-size:14px">${p.active?'Links work':'Links and the page stop working'}</span></span><button type="button" class="toggle ${p.active?'on':''}" data-a="practive" aria-pressed="${p.active}" aria-label="Active"></button></div>
+  <button class="btn ghost sm" data-a="prnewlink" style="margin-top:8px">New guest list link</button>`:''}`]}
+const prRe=()=>openSheet(S.sheet,true);
+async function prReload(){try{PROMS=(await GET(vurl('/promoters'))).promoters}catch(_){}render()}
+Object.assign(ACT,{
+pradd:()=>{S.pred={name:'',phone:'',kind:'guest',comm:''};openSheet({k:'prom'})},
+pred:v=>{const p=PROMS.find(x=>x.id===v);S.pred={name:p.name,phone:p.phone||'',kind:p.commissionKind,comm:p.commissionKind==='percent'?p.commission/100:p.commission/100};openSheet({k:'prom',id:v})},
+prkind:v=>{S.pred.name=$('#prname').value;S.pred.comm=$('#prcomm').value;S.pred.kind=v;prRe()},
+prcopy:v=>{const p=PROMS.find(x=>x.id===S.sheet.id);try{navigator.clipboard.writeText(v==='book'?bookLink(p):listLink(p))}catch(_){}toast('Link copied')},
+practive:async()=>{const id=S.sheet.id,p=PROMS.find(x=>x.id===id);await act(()=>PATCH(vurl(`/promoters/${id}`),{active:!p.active}),p.active?`${p.name} is off`:`${p.name} is active`,{reload:false});await prReload()},
+prnewlink:async()=>{const id=S.sheet.id;const r=await act(()=>PATCH(vurl(`/promoters/${id}`),{newLink:true}),'New link made. The old one stops working.',{reload:false});if(r)await prReload()},
+gldel:v=>act(()=>DEL(vurl(`/guestlist/${v}`)),'Taken off the list'),
+});
+document.addEventListener('submit',async e=>{const f=e.target;if(!S||!['promf','gladd'].includes(f.id))return;e.preventDefault();
+  if(f.id==='gladd'){const r=await act(()=>POST(vurl('/guestlist'),{name:val('glname'),plus:+$('#glplus').value,...($('#glprom').value?{promoterId:$('#glprom').value}:{})}),r=>`${r.name} is on tonight's list`);return}
+  const id=S.sheet?.id,kind=S.pred.kind,c=parseFloat($('#prcomm').value)||0,ph=telRead('prphone');
+  const body={name:val('prname'),commissionKind:kind,commission:Math.round(c*100),...(ph?{phone:ph}:{phone:null}),...($('#prcode')?{code:val('prcode')}:{})};
+  const r=await act(()=>id?PATCH(vurl(`/promoters/${id}`),body):POST(vurl('/promoters'),body),id?'Saved':`${body.name} added. Send them their links.`,{reload:false});
+  if(r){await prReload();openSheet({k:'prom',id:r.id})}});
+
+/* The promoter's own page: /pl/TOKEN */
+var PLP={data:null,night:null,busy:false,plus:0};
+async function plLoad(){const t=location.pathname.split('/')[2];try{PLP.data=await pubGet(`/promoter/${t}${PLP.night?'?night='+PLP.night:''}`);PLP.night=PLP.data.night}catch(e){GUEST.err=e.status===404?'This link is not valid any more. Ask the venue for a new one.':e.message}render()}
+function plPage(){const D=PLP.data;if(!D)return guestShell('<div class="loading">Loading…</div>');const tm=addDays(D.tonight,1),n=D.list.reduce((s,l)=>s+1+l.plus,0),inn=D.list.filter(l=>l.in).reduce((s,l)=>s+1+l.plus,0);
+  return guestShell(`<div class="evtop">${D.venue.logo?`<img src="${esc(D.venue.logo)}" alt="" style="width:38px;height:38px;border-radius:10px;object-fit:cover">`:`<span class="vlogo mono" style="width:38px;height:38px;font-size:15px;background:${esc(D.venue.color||'#12153f')};color:#fff">${esc(D.venue.name[0])}</span>`}<b>${esc(D.venue.name)}</b></div>
+  <div class="gbody"><div><h2 style="font-size:24px;margin:0 0 4px">Hi ${esc(D.promoter.name.split(' ')[0])}</h2><p style="margin:0;color:#5b6280">Add your guests. The door checks them in by name.</p></div>
+  <div class="plstats"><div><b class="num">${D.month.guestsIn}</b><span>guests in this month</span></div><div><b class="num">${egp(D.month.owed/100)}</b><span>earned this month</span></div></div>
+  <div class="seg" style="align-self:flex-start">${[[D.tonight,'Tonight'],[tm,'Tomorrow']].map(([d,l])=>`<button class="${PLP.night===d?'on':''}" data-a="plnight" data-v="${d}">${l}</button>`).join('')}</div>
+  <form id="pladd" class="stack" style="margin:0"><input class="gin" id="plname" placeholder="Guest name" required minlength="2" maxlength="80" autocomplete="off">
+  <div style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span style="font-weight:600">Friends with them</span><div class="stepper"><button type="button" data-a="plplus" data-v="-1" aria-label="Fewer">−</button><b class="num">${PLP.plus}</b><button type="button" data-a="plplus" data-v="1" aria-label="More">+</button></div></div>
+  <button class="gbtn" type="submit" ${PLP.busy?'disabled':''}>Add to the list</button></form>
+  <div><h3 style="margin:0 0 6px">${n?`${n} on the list · ${inn} in`:'No names yet'}</h3>${D.list.map(l=>`<div class="plrow"><span><b>${esc(l.name)}</b>${l.plus?` <span style="color:#5b6280">+${l.plus}</span>`:''}</span>${l.in?'<span class="pill" style="background:#8ae734;color:#0c1033">In</span>':`<button class="x sm" data-a="pldel" data-v="${l.id}" aria-label="Remove ${esc(l.name)}">×</button>`}</div>`).join('')}</div>
+  <p style="font-size:13px;color:#5b6280;margin:0">Your booking link: <b>${esc(location.origin)}/book/${esc(D.venue.slug)}?ref=${esc(D.promoter.code)}</b></p></div>`,D.venue.color||'#12153f')}
+Object.assign(ACT,{
+plnight:v=>{PLP.night=v;plLoad()},
+plplus:v=>{PLP.plus=Math.max(0,Math.min(20,PLP.plus+ +v));render()},
+pldel:async v=>{const t=location.pathname.split('/')[2];try{await api('DELETE',`/public/promoter/${t}/guests/${v}`,undefined,null);await plLoad()}catch(e){toast(e.message)}},
+});
+document.addEventListener('submit',async e=>{if(e.target.id!=='pladd')return;e.preventDefault();const t=location.pathname.split('/')[2],name=$('#plname').value.trim();if(PLP.busy)return;PLP.busy=true;
+  try{await pubPost(`/promoter/${t}/guests`,{name,plus:PLP.plus,night:PLP.night});PLP.plus=0;toast(`${name} is on the list`);await plLoad();setTimeout(()=>$('#plname')?.focus(),50)}catch(x){toast(x.message)}PLP.busy=false;render()});

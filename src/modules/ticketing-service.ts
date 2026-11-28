@@ -1,3 +1,4 @@
+import { promoterByRef } from './promoters-service.js';
 import { z } from 'zod';
 import { and, asc, eq, inArray, lt, sql } from 'drizzle-orm';
 import { db, schema, type Conn } from '../db/index.js';
@@ -19,6 +20,8 @@ export const holdInput = z.object({
     z.object({ zoneId: z.string().uuid(), qty: z.number().int().min(1).max(50) }),
     z.object({ zoneId: z.string().uuid(), seatId: z.string().uuid() }),
   ])).min(1).max(50),
+  /** Promoter code from the link (?ref=KARIM). */
+  ref: z.string().trim().max(40).optional(),
 });
 
 /** Turns held orders past their hold time into expired and frees their promo use. */
@@ -128,7 +131,7 @@ export async function hold(eventId: string, input: z.infer<typeof holdInput>) {
     const { event, lines } = await linesFor(tx, eventId, input.items);
     const totals = computeTicketTotals({ lines, percentOff: 0, ...rates });
     const [order] = await tx.insert(schema.ticketOrders).values({
-      code: shortCode(), venueId: event.venueId, eventId, status: 'held',
+      code: shortCode(), venueId: event.venueId, eventId, status: 'held', promoterId: await promoterByRef(tx, event.venueId, input.ref),
       holdExpiresAt: new Date(Date.now() + config.holdMinutes * 60_000), ...totals, ...rates,
     }).returning();
     await tx.insert(schema.ticketOrderLines).values(lines.map((l) => ({ ...l, orderId: order.id })));

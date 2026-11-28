@@ -11,7 +11,7 @@
 export const FEATURES = ['reservations', 'ordering', 'ticketing', 'marketing', 'guests', 'community'] as const;
 export type Feature = (typeof FEATURES)[number];
 
-export const PERMS = ['floor', 'bookings', 'door', 'orders', 'events', 'marketing', 'guests', 'community', 'editor', 'setup', 'staff', 'reports', 'messages', 'kitchen'] as const;
+export const PERMS = ['floor', 'bookings', 'door', 'orders', 'events', 'marketing', 'guests', 'community', 'editor', 'setup', 'staff', 'reports', 'messages', 'kitchen', 'promoters'] as const;
 export type Perm = (typeof PERMS)[number];
 
 export const PRESETS: Record<'owner' | 'manager' | 'door' | 'waiter', Perm[]> = {
@@ -23,7 +23,7 @@ export const PRESETS: Record<'owner' | 'manager' | 'door' | 'waiter', Perm[]> = 
 
 /** Which feature a screen belongs to (screens with none are always there). */
 export const PERM_FEATURE: Partial<Record<Perm, Feature>> = {
-  bookings: 'reservations', door: 'reservations', orders: 'ordering', kitchen: 'ordering', events: 'ticketing',
+  bookings: 'reservations', door: 'reservations', orders: 'ordering', kitchen: 'ordering', promoters: 'reservations', events: 'ticketing',
   marketing: 'marketing', guests: 'guests', community: 'community',
 };
 
@@ -55,6 +55,9 @@ const RULES: [method: string, test: RegExp, rule: Rule][] = [
   ['POST', /^\/reservations\/:id\/seat$/, { any: ['floor', 'bookings'], feature: 'reservations' }],
   ['*', /^\/reservations(\/|$)/, { any: ['bookings'], feature: 'reservations' }],
   ['*', /^\/checkin(\/|$)/, { any: ['door'] }],
+  ['GET', /^\/guestlist$/, { any: ['door', 'promoters'], feature: 'reservations' }],
+  ['POST', /^\/guestlist\/:entryId\/checkin$/, { any: ['door'], feature: 'reservations' }],
+  ['*', /^\/(promoters|guestlist)(\/|$)/, { any: ['promoters'], feature: 'reservations' }],
   ['*', /^\/shift(\/|$)/, { any: ['reports'], feature: 'ordering' }],
   ['*', /^\/kitchen(\/|$)/, { any: ['kitchen'], feature: 'ordering' }],
   ['GET', /^\/tabs$/, { any: ['floor', 'orders'], feature: 'ordering' }],
