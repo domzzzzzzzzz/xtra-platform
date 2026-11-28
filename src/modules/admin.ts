@@ -95,6 +95,8 @@ export default async function admin(app: FastifyInstance) {
         { venueId: venue.id, name: 'Silver', minSpend: 5_000_000, perks: ['Priority booking', 'Skip the line'], sort: 1 },
         { venueId: venue.id, name: 'Gold', minSpend: 15_000_000, perks: ['Guaranteed table', 'Free entry +1', 'Host on WhatsApp'], sort: 2 },
       ]);
+      // Ready-made role for cooks and bartenders: only the Kitchen screen.
+      await tx.insert(schema.venueRoles).values({ venueId: venue.id, name: 'Kitchen', permissions: ['kitchen'] });
       return { venue, owner: { id: user.id, email: user.email, name: user.name } };
     });
     reply.code(201);

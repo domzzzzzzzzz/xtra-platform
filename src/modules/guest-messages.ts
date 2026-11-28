@@ -243,8 +243,8 @@ export function waitlistOpen(v: VenueLike, g: Person, x: { event: string; when: 
 
 /** Email only: what the guest paid at the venue, line by line. */
 export function billReceipt(v: VenueLike, g: Person, t: { id: string; paidAt: Date | null; total: number; service: number; vat: number; minSpendTopUp: number; depositCredit: number; subtotal: number; payMethod: string | null },
-  items: { name: string; qty: number; unitPrice: number }[], when: string): GuestMessage {
-  const receipt: [string, string][] = items.map((i) => [`${i.qty} × ${i.name}`, egp(i.qty * i.unitPrice)]);
+  items: { name: string; qty: number; unitPrice: number; options?: { name: string }[] }[], when: string): GuestMessage {
+  const receipt: [string, string][] = items.map((i) => [`${i.qty} × ${i.name}${i.options?.length ? ` (${i.options.map((o) => o.name).join(', ')})` : ''}`, egp(i.qty * i.unitPrice)]);
   if (t.minSpendTopUp) receipt.push(['Minimum spend top-up', egp(t.minSpendTopUp)]);
   if (t.service) receipt.push(['Service', egp(t.service)]);
   if (t.vat) receipt.push(['VAT', egp(t.vat)]);

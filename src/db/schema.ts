@@ -291,7 +291,17 @@ export const menuItems = pgTable('menu_items', {
   price: integer('price').notNull(),
   active: boolean('active').notNull().default(true),
   sort: integer('sort').notNull().default(0),
+  /** Where the ticket prints: the kitchen or the bar. */
+  station: text('station').$type<Station>().notNull().default('bar'),
+  /** Extras the waiter picks when ordering (size, sauce, "no ice"). Prices add to the item. */
+  options: jsonb('options').$type<MenuOptionGroup[]>().notNull().default([]),
 });
+
+export const STATIONS = ['kitchen', 'bar'] as const;
+export type Station = (typeof STATIONS)[number];
+export type MenuOptionGroup = { name: string; required: boolean; multi: boolean; choices: { name: string; price: number }[] };
+/** An extra picked on one order line, copied so later menu edits never change a bill. */
+export type PickedOption = { group: string; name: string; price: number };
 
 export const tabStatus = pgEnum('tab_status', ['open', 'paid', 'void']);
 export const payMethod = pgEnum('pay_method', ['card', 'cash', 'instapay', 'wallet', 'paymob', 'free']);
@@ -330,10 +340,18 @@ export const tabItems = pgTable('tab_items', {
   unitPrice: integer('unit_price').notNull(),
   qty: integer('qty').notNull(),
   note: text('note').notNull().default(''),
+  /** unitPrice already includes these. */
+  options: jsonb('options').$type<PickedOption[]>().notNull().default([]),
+  station: text('station').$type<Station>().notNull().default('bar'),
+  /** status: new (not sent), sent (on the kitchen/bar screen), served (marked ready there), void. */
   status: tabItemStatus('status').notNull().default('new'),
+  /** One number per "Send": what the kitchen and bar call the ticket. */
+  ticketNo: integer('ticket_no'),
+  sentAt: timestamp('sent_at', { withTimezone: true }),
+  readyAt: timestamp('ready_at', { withTimezone: true }),
   addedBy: uuid('added_by'),
   createdAt: createdAt(),
-});
+}, (t) => [index('tab_items_tab_idx').on(t.tabId)]);
 
 /* ---------------------------------------------------------------- ticketing */
 

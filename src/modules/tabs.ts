@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { parse, venueAccess, MANAGERS, SERVICE } from '../lib/http.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
@@ -50,6 +50,23 @@ async function loadTab(venueId: string, tabId: string) {
   return t;
 }
 
+/** Check the waiter's picks against the item's extras and price them from the menu. */
+export function pickOptions(m: typeof schema.menuItems.$inferSelect, picks: { group: string; name: string }[]): schema.PickedOption[] {
+  const out: schema.PickedOption[] = [];
+  for (const g of m.options ?? []) {
+    const mine = picks.filter((p) => p.group === g.name);
+    if (g.required && !mine.length) throw badRequest(`Pick ${g.name.toLowerCase()} for ${m.name}`, 'option_required');
+    if (!g.multi && mine.length > 1) throw badRequest(`Pick one ${g.name.toLowerCase()} for ${m.name}`, 'option_one');
+    for (const p of mine) {
+      const c = g.choices.find((x) => x.name === p.name);
+      if (!c) throw badRequest(`${p.name} is not an option for ${m.name}`, 'option_unknown');
+      if (!out.some((o) => o.group === g.name && o.name === c.name)) out.push({ group: g.name, name: c.name, price: c.price });
+    }
+  }
+  if (picks.some((p) => !(m.options ?? []).some((g) => g.name === p.group))) throw badRequest(`Unknown option for ${m.name}`, 'option_unknown');
+  return out;
+}
+
 const openOnly = (t: Tab) => {
   if (t.status !== 'open') throw conflict('This bill is closed', 'tab_closed');
 };
@@ -93,9 +110,14 @@ export default async function tabs(app: FastifyInstance) {
       .orderBy(asc(schema.menuItems.category), asc(schema.menuItems.sort), asc(schema.menuItems.name));
   });
 
+  const optionGroup = z.object({
+    name: z.string().trim().min(1).max(40), required: z.boolean().default(false), multi: z.boolean().default(false),
+    choices: z.array(z.object({ name: z.string().trim().min(1).max(40), price: z.number().int().min(0).default(0) })).min(1).max(20),
+  });
   const menuItem = z.object({
-    category: z.string().min(1), name: z.string().min(1), description: z.string().default(''),
+    category: z.string().trim().min(1).max(40), name: z.string().trim().min(1).max(80), description: z.string().max(300).default(''),
     price: z.number().int().min(0), active: z.boolean().default(true), sort: z.number().int().default(0),
+    station: z.enum(schema.STATIONS).default('bar'), options: z.array(optionGroup).max(8).default([]),
   });
 
   app.post<{ Params: P }>('/venues/:venueId/menu', async (req, reply) => {
@@ -176,37 +198,52 @@ export default async function tabs(app: FastifyInstance) {
     const tab = await loadTab(req.params.venueId, req.params.tabId);
     openOnly(tab);
     const { items } = parse(z.object({
-      items: z.array(z.object({ menuItemId: z.string().uuid(), qty: z.number().int().min(1).max(99), note: z.string().max(200).default('') })).min(1).max(50),
+      items: z.array(z.object({
+        menuItemId: z.string().uuid(), qty: z.number().int().min(1).max(99), note: z.string().trim().max(200).default(''),
+        /** Picked extras, by group and choice name. */
+        options: z.array(z.object({ group: z.string(), name: z.string() })).max(40).default([]),
+      })).min(1).max(50),
     }), req.body);
     const menu = await db.select().from(schema.menuItems)
       .where(and(eq(schema.menuItems.venueId, tab.venueId), inArray(schema.menuItems.id, items.map((i) => i.menuItemId))));
     const rows = items.map((i) => {
       const m = menu.find((x) => x.id === i.menuItemId);
       if (!m || !m.active) throw badRequest('An item is not on the menu');
-      return { tabId: tab.id, menuItemId: m.id, name: m.name, unitPrice: m.price, qty: i.qty, note: i.note, addedBy: user.sub };
+      const options = pickOptions(m, i.options);
+      const unitPrice = m.price + options.reduce((s, o) => s + o.price, 0);
+      return { tabId: tab.id, menuItemId: m.id, name: m.name, unitPrice, qty: i.qty, note: i.note, options, station: m.station, addedBy: user.sub };
     });
     await db.insert(schema.tabItems).values(rows);
     return { ...tab, ...(await billFor(tab)) };
   });
 
-  /* "Send to bar": every new item on the tab goes out. */
+  /* "Send": every new item goes to the kitchen or bar screen under one ticket number. */
   app.post<{ Params: PT }>('/venues/:venueId/tabs/:tabId/send', async (req) => {
     await venueAccess(req, req.params.venueId, SERVICE);
     const tab = await loadTab(req.params.venueId, req.params.tabId);
     openOnly(tab);
-    const sent = await db.update(schema.tabItems).set({ status: 'sent' })
-      .where(and(eq(schema.tabItems.tabId, tab.id), eq(schema.tabItems.status, 'new'))).returning();
-    return { sent: sent.length, items: sent };
+    const sent = await db.transaction(async (tx) => {
+      // One venue at a time so two waiters never get the same ticket number.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'ticket:' + tab.venueId}))`);
+      const [{ n }] = await tx.select({ n: sql<number>`coalesce(max(${schema.tabItems.ticketNo}), 0)::int` })
+        .from(schema.tabItems).innerJoin(schema.tabs, eq(schema.tabs.id, schema.tabItems.tabId))
+        .where(eq(schema.tabs.venueId, tab.venueId));
+      return tx.update(schema.tabItems).set({ status: 'sent', ticketNo: n + 1, sentAt: new Date() })
+        .where(and(eq(schema.tabItems.tabId, tab.id), eq(schema.tabItems.status, 'new'))).returning();
+    });
+    return { sent: sent.length, ticketNo: sent[0]?.ticketNo ?? null, items: sent };
   });
 
-  /* Take one off: from items not sent yet first. Sent items need a manager. */
+  /* Take one off: a given line, or the newest of an item (not sent yet first). Sent items need a manager. */
   app.post<{ Params: PT }>('/venues/:venueId/tabs/:tabId/remove', async (req) => {
     const { role } = await venueAccess(req, req.params.venueId, SERVICE);
     const tab = await loadTab(req.params.venueId, req.params.tabId);
     openOnly(tab);
-    const { menuItemId } = parse(z.object({ menuItemId: z.string().uuid() }), req.body);
+    const b = parse(z.object({ menuItemId: z.string().uuid().optional(), itemId: z.string().uuid().optional() })
+      .refine((x) => x.menuItemId || x.itemId, 'Say which item'), req.body);
     const rows = await db.select().from(schema.tabItems)
-      .where(and(eq(schema.tabItems.tabId, tab.id), eq(schema.tabItems.menuItemId, menuItemId), ne(schema.tabItems.status, 'void')))
+      .where(and(eq(schema.tabItems.tabId, tab.id), ne(schema.tabItems.status, 'void'),
+        b.itemId ? eq(schema.tabItems.id, b.itemId) : eq(schema.tabItems.menuItemId, b.menuItemId!)))
       .orderBy(desc(schema.tabItems.createdAt));
     const it = rows.find((r) => r.status === 'new') ?? rows[0];
     if (!it) throw notFound('Item not on this bill');

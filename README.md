@@ -25,7 +25,7 @@ One page, no build step, served by the same server:
 
 | Address | Who | What |
 | --- | --- | --- |
-| `/` | Staff | Floor, bookings, door scanner, orders and bills, events, marketing, guests, community, booking page, floor map, venue setup |
+| `/` | Staff | Floor, bookings, door scanner, orders and bills, kitchen and bar screen, menu, events, marketing, guests, community, booking page, floor map, venue setup |
 | `/book/:slug` | Guests | Booking page of a venue |
 | `/b/:code` | Guests | Booking status, deposit payment, QR pass |
 | `/e/:eventId` | Guests | Ticket page: seat map (theatre rows, standing, tables or a mix), 10-minute hold from the first pick, promo code, Paymob checkout |
@@ -60,6 +60,8 @@ built-in test checkout at `/dev/pay/:id`, and messages are saved to the
 - **Holds**: the first seat a guest taps holds it for 10 minutes; adding or dropping seats keeps the same clock. Other guests see held seats as "on hold". Expired holds free the seats and the promo use (a sweeper runs every 20 seconds).
 - **Corporate / private events**: switch an event to *Invitation only* and nothing is sold. Sections can be *free seating* (sit anywhere in the section) or own seats. Invite one person to a zone or a seat picked on the map, or paste a list: own-seat sections hand out the next free seats row by row (`POST /venues/:id/events/:eventId/invites/bulk`).
 - **Passes**: every ticket QR is tied to its seat, table or standing zone. Opening the pass shows the map with a walking route from the entrance.
+- **Kitchen and bar**: each menu item goes to the kitchen or the bar. One *Send* from a waiter is one ticket number; the Kitchen screen shows it once per station, oldest first, turning yellow after 10 minutes and red after 20. *Ready* shows on the waiter's order. A device can print every new ticket (80 mm); Chrome started with `--kiosk-printing` prints without a dialog. Every venue gets a ready-made *Kitchen* role that only opens this screen.
+- **Extras**: a menu item can have sets of extras (pick one, must pick one, or pick any), each choice with its own price. The price is added to the line and copied onto the bill.
 - **Marketing** only reaches guests who opted in on that channel (Law 151/2020).
 
 ## API map
@@ -74,7 +76,8 @@ All under `/api`. Staff send `Authorization: Bearer <token>` from `/auth/login`.
 | Floor map | `GET/PUT /venues/:id/floor` (whole map: zones, tables, sofas, chairs, bar, DJ...), `PATCH /venues/:id/floor/:itemId` (switch a chair on/off) |
 | Bookings | `GET/POST /venues/:id/reservations`, `.../:rid/accept`, `/decline`, `/table`, `/cancel`, `/no-show`, `/complete`, live map `GET /venues/:id/tonight` |
 | Door | `POST /venues/:id/checkin` with the QR token (booking passes and tickets) |
-| Ordering | menu `GET/POST/PATCH /venues/:id/menu`, bills `GET/POST /venues/:id/tabs`, `.../:tabId/items`, `/send`, `/items/:itemId/void`, `/pay` |
+| Ordering | menu `GET/POST/PATCH /venues/:id/menu` (station kitchen/bar, extras), bills `GET/POST /venues/:id/tabs`, `.../:tabId/items` (with extras and a note), `/send` (one ticket number), `/remove`, `/items/:itemId/void`, `/pay` |
+| Kitchen and bar | `GET /venues/:id/kitchen?station=kitchen\|bar\|all` (open tickets + ready in the last 20 min), `POST .../kitchen/:ticketNo/ready` `{station, ready}` |
 | Events | `GET/POST/PATCH /venues/:id/events`, seat map `PUT .../:eventId/map`, `GET .../sales`, `GET .../tickets` |
 | Promo codes | `GET/POST /venues/:id/promos`, `POST /venues/:id/promos/batch` (unique single-use codes, optionally locked to phones), `PATCH .../:promoId` |
 | Guests | `GET /venues/:id/guests?q=&tag=`, `GET/PATCH .../:guestId`, `POST .../:guestId/points`, tiers `GET/PUT /venues/:id/tiers` |
