@@ -15,6 +15,7 @@ import { localDate, nightOf } from '../lib/dates.js';
 import { MANAGERS, venueAccess } from '../lib/http.js';
 import { runDailyReports } from './daily-report.js';
 import { runNoShows, runReminders } from './reminders.js';
+import { runSaasInvoices } from './billing.js';
 
 export const AUTOMATIONS = ['thanks', 'bday', 'winback'] as const;
 type Auto = (typeof AUTOMATIONS)[number];
@@ -91,7 +92,7 @@ export async function runAutomations(now = new Date()) {
 
 /** Checks every 10 minutes. */
 export function startAutomations() {
-  const t = setInterval(() => { runAutomations().catch(() => {}); runDailyReports().catch(() => {}); runNoShows().catch(() => {}); runReminders().catch(() => {}); }, 10 * 60_000);
+  const t = setInterval(() => { runAutomations().catch(() => {}); runDailyReports().catch(() => {}); runNoShows().catch(() => {}); runReminders().catch(() => {}); runSaasInvoices().catch(() => {}); }, 10 * 60_000);
   t.unref();
   return t;
 }

@@ -8,6 +8,7 @@ import { AppError, notFound } from '../lib/errors.js';
 import { onDepositPaid } from './reservations.js';
 import { onTicketsPaid } from './ticketing-service.js';
 import { onTabPaid } from './tabs.js';
+import { onSaasPaid } from './billing.js';
 
 type Purpose = (typeof schema.paymentPurpose.enumValues)[number];
 
@@ -36,6 +37,7 @@ export async function markPaid(paymentId: string, txnId: string | null, raw: unk
   if (done.purpose === 'deposit') await onDepositPaid(done.refId);
   if (done.purpose === 'tickets') await onTicketsPaid(done.refId);
   if (done.purpose === 'tab') await onTabPaid(done.refId, 'paymob');
+  if (done.purpose === 'saas') await onSaasPaid(done.refId);
   return true;
 }
 

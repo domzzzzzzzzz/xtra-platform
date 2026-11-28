@@ -581,7 +581,7 @@ gparea:v=>{const gp=S.gp;gp.area=v;if(gp.table&&pubEL(gp.table)?.zone!==v)gp.tab
 gptable:v=>{const gp=S.gp,t=pubEL(v);if(t.seats<gp.party){toast(`Table ${t.name} has ${t.seats} seats. Pick a bigger one or fewer guests.`);return}gp.table=gp.table===v?null:v;if(gp.table&&t.zone)gp.area=t.zone;render()},
 gpsubmit:async()=>{const gp=S.gp,f=gp.f;if(gp.busy)return;gp.busy=true;gp.err='';render();
   const P=o=>({name:o.name.trim(),...(o.phone.trim()?{phone:o.phone.trim()}:{}),...(/^\S+@\S+\.\S+$/.test(o.email)?{email:o.email.trim()}:{}),...(o.ig.trim()?{instagram:o.ig.trim().replace(/^@/,'')}:{}),...(o.gender?{gender:o.gender.toLowerCase()}:{})});
-  try{const r=await pubPost(`/venues/${PUB.slug}/bookings`,{...(REF()?{ref:REF()}:{}),...(SRC()?{src:SRC()}:{}),date:PDAYS[gp.day][3],slotId:gp.slot,...(gp.area?{zoneId:gp.area}:{}),...(gp.table?{tableId:gp.table}:{}),partySize:gp.party,
+  try{const r=await pubPost(`/venues/${PUB.slug}/bookings`,{...(REF()?{ref:REF()}:{}),...(SRCQ()?{src:SRCQ()}:{}),date:PDAYS[gp.day][3],slotId:gp.slot,...(gp.area?{zoneId:gp.area}:{}),...(gp.table?{tableId:gp.table}:{}),partySize:gp.party,
       booker:{...P(f),whatsappOptIn:!!f.consent,emailOptIn:!!f.consent},guests:PUB.info.askNames?gp.others.map(P):[]});
     gp.code=r.code;gp.step='status';gp.busy=false;PUB.days={};
     if(GUEST)history.replaceState(null,'','/b/'+r.code);
@@ -622,6 +622,7 @@ function vSetup(){
   <div class="bigbox"><h3>Ticket fees</h3><p class="mute" style="font-size:14px;margin:4px 0 0">Added on top of the ticket price at checkout. VAT is charged on the fees only.</p>${ME.user.isSuperAdmin?`<div class="two" style="margin-top:12px"><label class="f">Booking fee %<input type="number" min="0" max="50" step="0.5" data-fee="feePct" value="${c.feePct??5}" inputmode="decimal"></label><label class="f">VAT on fees %<input type="number" min="0" max="30" step="0.5" data-fee="vatPct" value="${c.vatPct??14}" inputmode="decimal"></label></div><p class="mute" style="font-size:13px;margin:8px 0 0">You are an XTRA admin: this applies to every venue.</p>`:`<div class="conn"><div><b>Booking fee</b></div><b class="num">${c.feePct}%</b></div><div class="conn"><div><b>VAT on fees</b></div><b class="num">${c.vatPct}%</b></div><p class="mute" style="font-size:13px;margin:8px 0 0">Set by XTRA.</p>`}<p class="mute num" style="font-size:14px;margin:10px 0 0">Example: a ${egp(1000)} ticket pays ${egp(Math.round(1000*(c.feePct??5)/100))} fees + ${egp(Math.round(1000*(c.feePct??5)/100*(c.vatPct??14)/100))} VAT = ${egp(1000+Math.round(1000*(c.feePct??5)/100)+Math.round(1000*(c.feePct??5)/100*(c.vatPct??14)/100))}</p></div>
   ${CAN('reports')||CAN('setup')?drCard():''}
   ${CAN('setup')&&HAS('reservations')?nsCard():''}
+  ${venueBill()}
   <div class="bigbox"><h3>Payments and messages</h3>${[['paymob','Paymob','Cards, Meeza, wallets, InstaPay, valU'],['whatsapp','WhatsApp Business','Requests, confirmations, passes, campaigns'],['email','Email','Booking and ticket emails in your venue name'],['appleWallet','Apple Wallet','Add to Apple Wallet on passes and tickets'],['googleWallet','Google Wallet','Add to Google Wallet on passes and tickets']].map(([k,l,d])=>`<div class="conn"><div><b>${l}</b><div class="mute" style="font-size:14px">${d}</div></div><span class="pill ${LIVE_INT[k]?'p-arrived':'p-pending'}">${LIVE_INT[k]?'Live':'Test mode'}</span></div>`).join('')}<p class="mute" style="font-size:13px;margin:10px 0 0">Test mode: payments open a test checkout and messages are saved, not sent. XTRA connects the live accounts.</p></div>
   ${CAN('staff')?`<div class="bigbox"><h3>Staff</h3>${S.staff.map(m=>`<div class="conn"><div><b>${esc(m.name)}</b><div class="mute" style="font-size:14px">${esc(m.email)}</div></div>${roleSelect(m)}</div>`).join('')||'<div class="empty">No staff yet.</div>'}
   <h3 style="margin-top:18px">Add staff</h3><form id="addstaff" class="stack" style="margin-top:8px"><div class="two"><label class="f">Name<input id="sname" required minlength="2" autocomplete="off"></label><label class="f">Role<select id="srole">${roleOptions(S.roles,'waiter')}</select></label></div><div class="two"><label class="f">Email<input id="semail" type="email" required autocomplete="off"></label><label class="f">Password<input id="spass" type="text" required minlength="8" autocomplete="off" placeholder="At least 8 characters"></label></div><button class="btn sm" type="submit">Add staff</button></form></div>`:''}</div>`;
@@ -1480,7 +1481,7 @@ function guestView(){const G2=GUEST;
   return guestShell('');
 }
 async function bootGuest(path){
-  const [,k,a]=path.split('/');REF();SRC();document.body.classList.add('guestmode');$('#guest').hidden=false;
+  const [,k,a]=path.split('/');REF();SRCQ();document.body.classList.add('guestmode');$('#guest').hidden=false;
   VENUES=[];S={vi:0,gp:newGP(),evp:newEVP(),sheet:null,events:[],bookings:[],guests:[],orders:{}};
   const map={book:'book',b:'status',e:'event',o:'order',t:'pass',p:'pass',me:'me',paid:'paid',pl:'promoter'};GUEST={kind:map[k]||'paid'};if(GUEST.kind==='book')GUEST.slug=decodeURIComponent(a);
   await loadMe();render();
@@ -1511,7 +1512,7 @@ function roleSelect(m,vid){const mine=m.userId===ME.user.id;
 
 const ADM={venues:null,sel:null,roles:null,staff:null,busy:false,newRole:null};
 async function admLoad(sel){try{ADM.venues=await GET('/admin/venues');ADM.sel=sel||ADM.sel||ADM.venues[0]?.id||null;if(ADM.sel)await admLoadVenue();render()}catch(e){toast(e.message)}}
-async function admLoadVenue(){const id=ADM.sel;const [r,st]=await Promise.all([GET(`/venues/${id}/roles`),GET(`/venues/${id}/staff`)]);if(ADM.sel===id){ADM.roles=r;ADM.staff=st}}
+async function admLoadVenue(){const id=ADM.sel;const [r,st,bl]=await Promise.all([GET(`/venues/${id}/roles`),GET(`/venues/${id}/staff`),GET(`/admin/venues/${id}/billing`).catch(()=>null)]);if(ADM.sel===id){ADM.roles=r;ADM.staff=st;ADM.bill=bl}GET('/admin/billing').then(x=>{ADM.sum=x;if(VIEW==='admin'&&!S.sheet)render()}).catch(()=>{})}
 const featChips=v=>FEAT_INFO.filter(([k])=>v.features.includes(k)).map(([,l])=>`<span class="tag">${l}</span>`).join('')||'<span class="mute" style="font-size:13px">No modules</span>';
 function permGrid(sel,attr,features){return `<div class="permgrid">${PERM_INFO.map(([k,l,d])=>{const off=PERM_FEAT[k]&&!features.includes(PERM_FEAT[k]);return `<label class="perm ${off?'off':''}"><input type="checkbox" ${attr}="${k}" ${sel.includes(k)?'checked':''}><span><b>${l}</b><small>${off?'Module is off for this venue':d}</small></span></label>`}).join('')}</div>`}
 function vAdmin(){
@@ -1530,9 +1531,9 @@ function vAdmin(){
     const accts=!ADM.staff?'<div class="bigbox">Loading…</div>':`<div class="bigbox"><h3>Accounts</h3><p class="mute" style="font-size:14px;margin:4px 0 6px">Everyone who signs in to ${esc(V2.name)}.</p>${ADM.staff.map(m=>`<div class="conn"><div style="min-width:0"><b>${esc(m.name)}</b><div class="mute" style="font-size:14px;overflow-wrap:anywhere">${esc(m.email)}</div></div>${roleSelect(m,V2.id)}</div>`).join('')||'<div class="empty">No accounts yet.</div>'}
       <h3 style="margin-top:18px">Add an account</h3><form id="admstaff" class="stack" style="margin-top:8px"><div class="two"><label class="f">Name<input id="asname" required minlength="2" autocomplete="off"></label><label class="f">Role<select id="asrole">${roleOptions(R,'manager')}</select></label></div><div class="two"><label class="f">Email<input id="asemail" type="email" required autocomplete="off"></label><label class="f">Password<input id="aspass" type="text" required minlength="8" autocomplete="off" placeholder="At least 8 characters"></label></div><button class="btn sm" type="submit">Add account</button></form></div>`;
     const i=ME.venues.findIndex(v=>v.id===V2.id);
-    detail=`<div class="admd"><div class="admtop"><div><h2>${esc(V2.name)}</h2><span class="mute">${esc(location.host)}/book/${esc(V2.slug)}</span></div>${i>=0&&i!==S.vi?`<button class="btn ghost sm" data-a="setvenue" data-v="${i}">Open this venue</button>`:''}</div>${feats}${roles}${accts}</div>`;
+    detail=`<div class="admd"><div class="admtop"><div><h2>${esc(V2.name)}</h2><span class="mute">${esc(location.host)}/book/${esc(V2.slug)}</span></div>${i>=0&&i!==S.vi?`<button class="btn ghost sm" data-a="setvenue" data-v="${i}">Open this venue</button>`:''}</div>${admBill(V2)}${feats}${roles}${accts}</div>`;
   }
-  return head('XTRA admin','Venues on XTRA: what each one has, its roles and its accounts.',`<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost" data-a="myacct">My account</button><button class="btn ghost" data-a="admins">Admins</button><button class="btn" data-a="admnew">New venue</button></div>`)+`<div class="adm">${list}${detail}</div>`;
+  return head('XTRA admin',ADM.sum?`${egp(ADM.sum.mrr/100)} a month from active plans · ${egp(ADM.sum.unpaid/100)} unpaid invoices · ${egp(ADM.sum.owedToVenues/100)} to pay out to venues`:'Venues on XTRA: what each one has, its roles and its accounts.',`<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost" data-a="myacct">My account</button><button class="btn ghost" data-a="admins">Admins</button><button class="btn" data-a="admnew">New venue</button></div>`)+`<div class="adm">${list}${detail}</div>`;
 }
 const admPatch=async b=>{const r=await act(()=>PATCH(`/admin/venues/${ADM.sel}`,b),null,{reload:false});if(r){Object.assign(ADM.venues.find(v=>v.id===ADM.sel),r);ME=await GET('/auth/me');render()}return r};
 const ADMACT={
@@ -2024,4 +2025,39 @@ shqr:()=>{const VV=VENUES[S.vi],q=qrcode(0,'M');q.addData(`${location.origin}/bo
   const a=document.createElement('a');a.download=`${VV.slug}-booking-qr.png`;a.href=c.toDataURL('image/png');a.click()},
 });
 /** Where the guest came from (?src=instagram), kept for this visit. */
-function SRC(){try{const q=new URLSearchParams(location.search).get('src');if(q)sessionStorage.setItem('xtra.src',q);return q||sessionStorage.getItem('xtra.src')}catch(_){return null}}
+function SRCQ(){try{const q=new URLSearchParams(location.search).get('src');if(q)sessionStorage.setItem('xtra.src',q);return q||sessionStorage.getItem('xtra.src')}catch(_){return null}}
+
+/* ---------- XTRA billing: plans, invoices, settlement and payouts ---------- */
+const INVST={unpaid:'Unpaid',paid:'Paid',void:'Void'},PMETH={paymob:'online',instapay:'InstaPay',transfer:'bank transfer',cash:'cash'};
+const invRow=(i,admin)=>`<div class="conn"><div><b>${esc(i.number)}</b> <span class="pill" style="${i.status==='paid'?'background:var(--green);color:var(--chipink)':i.status==='unpaid'?'background:var(--yellow);color:var(--chipink)':''}">${INVST[i.status]}</span><div class="mute" style="font-size:14px">${esc(new Date(i.period+'-15T12:00:00Z').toLocaleDateString('en-GB',{month:'long',year:'numeric',timeZone:'UTC'}))} · ${egp2(i.total/100)} with VAT${i.status==='paid'?` · paid ${PMETH[i.method]||''}`:` · due ${esc(i.dueDate)}`}</div></div>
+  ${admin?(i.status==='unpaid'?`<div style="display:flex;gap:6px"><button class="btn sm teal" data-a="invpaid" data-v="${i.id}">Mark paid</button><button class="chip" data-a="invvoid" data-v="${i.id}">Void</button></div>`:i.status==='paid'?`<button class="chip" data-a="invunpaid" data-v="${i.id}">Undo</button>`:''):(i.status==='unpaid'?`<button class="btn sm teal" data-a="invpay" data-v="${i.id}">Pay ${egp2(i.total/100)}</button>`:'')}</div>`;
+const setlBox=(B,admin)=>{const t=B.settlement;return `<div class="facts" style="margin-top:8px"><div><span>Deposits</span><b class="num">${egp(t.deposits/100)}</b></div><div><span>Ticket sales</span><b class="num">${egp(t.tickets/100)}</b></div><div><span>Bills paid online</span><b class="num">${egp(t.bills/100)}</b></div><div><span>Refunds</span><b class="num">${t.refunds?'−'+egp(t.refunds/100):'None'}</b></div></div>
+  <div class="sum tot" style="margin-top:8px"><span>${admin?'Owed to the venue this month':'Yours this month'}</span><span class="num">${egp2(t.owed/100)}</span></div>
+  <div class="sum"><span>Waiting to be paid out, all time</span><span class="num"><b>${egp2(B.balance/100)}</b></span></div>
+  ${B.payouts.length?`<h3 style="margin-top:14px">Payouts</h3>${B.payouts.map(p=>`<div class="sum"><span>${esc(p.paidOn)}${p.reference?' · '+esc(p.reference):''}</span><span class="num">${egp2(p.amount/100)}${admin?` <button class="x sm" data-a="podel" data-v="${p.id}" aria-label="Delete payout">×</button>`:''}</span></div>`).join('')}`:''}`};
+function admBill(V2){const B=ADM.bill;if(!B)return '';const P=B.plan||{price:0,status:'trial'};
+  return `<div class="bigbox"><h3>Plan and money</h3><p class="mute" style="font-size:14px;margin:4px 0 8px">What ${esc(V2.name)} pays XTRA, and the guests' online money XTRA holds for them.</p>
+  <form id="planf" class="stack" style="margin-top:0"><div class="two"><label class="f">Monthly price (EGP, before VAT)<input id="plprice" type="number" min="0" step="50" inputmode="numeric" value="${P.price/100}"></label><label class="f">Free trial until<input id="pltrial" type="date" value="${esc(P.trialEnds||'')}"></label></div>
+  <div class="seg" style="align-self:flex-start">${[['trial','Trial'],['active','Active'],['paused','Paused']].map(([k,l])=>`<button type="button" class="${P.status===k?'on':''}" data-a="plst" data-v="${k}">${l}</button>`).join('')}</div>
+  <p class="mute" style="font-size:13px;margin:0">${P.status==='active'?'An invoice with 14% VAT is made on the 1st of each month and emailed to the owner.':P.status==='trial'?'No invoices until the trial ends. Then billing starts by itself.':'No invoices while paused.'}</p>
+  <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn sm" type="submit">Save plan</button>${P.price?`<button class="btn ghost sm" type="button" data-a="invnow">Bill this month now</button>`:''}</div></form>
+  ${B.invoices.length?`<h3 style="margin-top:16px">Invoices</h3>${B.invoices.map(i=>invRow(i,true)).join('')}`:''}
+  <h3 style="margin-top:16px">Guests' online money</h3>${setlBox(B,true)}
+  <form id="payoutf" class="gladd" style="grid-template-columns:120px minmax(0,1fr) auto;margin-top:12px"><input class="search" id="poamt" type="number" min="1" step="0.01" placeholder="EGP" required style="margin:0"><input class="search" id="poref" placeholder="Reference, like CIB transfer 1234" style="margin:0" maxlength="80"><button class="btn sm" type="submit">Record payout</button></form></div>`}
+function venueBill(){if(VENUES[S.vi]?.role!=='owner'&&!ME.user.isSuperAdmin)return '';const B=S.bill;if(B===undefined){S.bill=null;GET(vurl('/billing')).then(r=>{S.bill=r;if(VIEW==='setup')render()}).catch(()=>{S.bill=false});return ''}
+  if(!B)return '';const P=B.plan||{price:0,status:'trial'};
+  return `<div class="bigbox"><h3>Billing</h3><p class="mute" style="font-size:14px;margin:4px 0 6px">${P.status==='trial'?`Free trial${P.trialEnds?` until ${esc(P.trialEnds)}`:''}.`:P.status==='paused'?'Billing is paused.':`XTRA plan · ${egp(P.price/100)} a month + VAT.`}</p>
+  ${B.invoices.map(i=>invRow(i,false)).join('')||'<div class="mute" style="font-size:14px">No invoices yet.</div>'}
+  <h3 style="margin-top:16px">Money from XTRA</h3><p class="mute" style="font-size:14px;margin:4px 0 0">Deposits, tickets and bills guests paid online go to XTRA first, then to you. Booking fees are XTRA's.</p>${setlBox(B,false)}</div>`}
+Object.assign(ACT,{
+plst:v=>{ADM.bill.plan={...(ADM.bill.plan||{}),status:v};render()},
+invnow:async()=>{const r=await act(()=>POST(`/admin/venues/${ADM.sel}/invoices`,{}),r=>`Invoice ${r.number} made and emailed to the owner`,{reload:false});if(r)admLoadVenue().then(render)},
+invpaid:async v=>{const r=await act(()=>POST(`/admin/invoices/${v}/status`,{status:'paid',method:'transfer'}),'Marked paid',{reload:false});if(r)admLoadVenue().then(render)},
+invunpaid:async v=>{const r=await act(()=>POST(`/admin/invoices/${v}/status`,{status:'unpaid'}),'Back to unpaid',{reload:false});if(r)admLoadVenue().then(render)},
+invvoid:async v=>{const r=await act(()=>POST(`/admin/invoices/${v}/status`,{status:'void'}),'Invoice voided',{reload:false});if(r)admLoadVenue().then(render)},
+podel:async v=>{const r=await act(()=>DEL(`/admin/venues/${ADM.sel}/payouts/${v}`),'Payout deleted',{reload:false});if(r)admLoadVenue().then(render)},
+invpay:async v=>{const w=window.open('','_blank');try{const r=await POST(vurl(`/billing/invoices/${v}/pay`));if(w)w.location=r.checkoutUrl;else location.href=r.checkoutUrl;S.bill=undefined}catch(e){if(w)w.close();toast(e.message)}},
+});
+document.addEventListener('submit',async e=>{const f=e.target;if(!['planf','payoutf'].includes(f.id))return;e.preventDefault();
+  if(f.id==='planf'){const P=ADM.bill.plan||{};const r=await act(()=>PUT(`/admin/venues/${ADM.sel}/plan`,{price:Math.round((parseFloat($('#plprice').value)||0)*100),status:P.status||'trial',trialEnds:$('#pltrial').value||null}),'Plan saved',{reload:false});if(r)admLoadVenue().then(render);return}
+  const r=await act(()=>POST(`/admin/venues/${ADM.sel}/payouts`,{amount:Math.round(parseFloat($('#poamt').value)*100),reference:$('#poref').value}),'Payout recorded',{reload:false});if(r)admLoadVenue().then(render)});

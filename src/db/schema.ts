@@ -92,6 +92,7 @@ export const venues = pgTable('venues', {
   /** Screen settings the venue edits in Venue setup (slots grid, toggles, socials, automations). */
   settings: jsonb('settings').$type<VenueSettings>().notNull().default({}),
   /** Modules XTRA switched on for this venue (see lib/access.ts FEATURES). */
+  plan: jsonb('plan').$type<VenuePlan>().notNull().default({ price: 0, status: 'trial' }),
   features: jsonb('features').$type<string[]>().notNull().default(['reservations', 'ordering', 'ticketing', 'marketing', 'guests', 'community']),
   active: boolean('active').notNull().default(true),
   createdAt: createdAt(),
@@ -578,7 +579,7 @@ export const tickets = pgTable('tickets', {
 
 /* ---------------------------------------------------------------- payments */
 
-export const paymentPurpose = pgEnum('payment_purpose', ['deposit', 'tickets', 'tab']);
+export const paymentPurpose = pgEnum('payment_purpose', ['deposit', 'tickets', 'tab', 'saas']);
 export const paymentStatus = pgEnum('payment_status', ['pending', 'paid', 'failed', 'refunded']);
 
 export const payments = pgTable('payments', {
@@ -596,6 +597,41 @@ export const payments = pgTable('payments', {
   paidAt: timestamp('paid_at', { withTimezone: true }),
   createdAt: createdAt(),
 }, (t) => [index('payments_ref_idx').on(t.refId)]);
+
+/* ---------------------------------------------------------------- XTRA billing */
+
+/** What a venue pays XTRA each month. Set by XTRA admins. */
+export type VenuePlan = { price: number; status: 'trial' | 'active' | 'paused'; trialEnds?: string | null; note?: string };
+
+/** XTRA's monthly invoice to a venue for the platform. */
+export const saasInvoices = pgTable('saas_invoices', {
+  id: id(),
+  venueId: venueRef(),
+  number: text('number').notNull(),
+  /** "2026-12" */
+  period: text('period').notNull(),
+  amount: integer('amount').notNull(),
+  vat: integer('vat').notNull(),
+  total: integer('total').notNull(),
+  status: text('status').$type<'unpaid' | 'paid' | 'void'>().notNull().default('unpaid'),
+  dueDate: date('due_date').notNull(),
+  paidAt: timestamp('paid_at', { withTimezone: true }),
+  /** paymob | instapay | transfer | cash */
+  method: text('method'),
+  createdAt: createdAt(),
+}, (t) => [uniqueIndex('saas_invoices_period_uq').on(t.venueId, t.period), uniqueIndex('saas_invoices_number_uq').on(t.number)]);
+
+/** Money XTRA sent to a venue: what guests paid online for it (deposits, tickets, bills). */
+export const venuePayouts = pgTable('venue_payouts', {
+  id: id(),
+  venueId: venueRef(),
+  amount: integer('amount').notNull(),
+  paidOn: date('paid_on').notNull(),
+  reference: text('reference').notNull().default(''),
+  note: text('note').notNull().default(''),
+  by: uuid('by'),
+  createdAt: createdAt(),
+}, (t) => [index('venue_payouts_venue_idx').on(t.venueId, t.paidOn)]);
 
 /* ---------------------------------------------------------------- marketing */
 
