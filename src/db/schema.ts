@@ -34,6 +34,8 @@ export const users = pgTable('users', {
   name: text('name').notNull(),
   passwordHash: text('password_hash').notNull(),
   isSuperAdmin: boolean('is_super_admin').notNull().default(false),
+  /** Sign-ins made before this (a password change) stop working. */
+  passwordChangedAt: timestamp('password_changed_at', { withTimezone: true }),
   createdAt: createdAt(),
 }, (t) => [uniqueIndex('users_email_uq').on(t.email)]);
 

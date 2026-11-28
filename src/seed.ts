@@ -6,7 +6,10 @@ import { config } from './config.js';
 
 await runMigrations();
 const email = config.superAdmin.email.toLowerCase();
+// Only the very first start makes the admin from env. Later, admins change their
+// own email and password in the app, so it must not come back on a restart.
 let [admin] = await db.select().from(schema.users).where(eq(schema.users.email, email));
+if (!admin) [admin] = await db.select().from(schema.users).where(eq(schema.users.isSuperAdmin, true)).limit(1);
 if (!admin) {
   [admin] = await db.insert(schema.users).values({ email, name: 'XTRA Admin', isSuperAdmin: true, passwordHash: await bcrypt.hash(config.superAdmin.password, 10) }).returning();
   console.log(`Super admin: ${email}`);
