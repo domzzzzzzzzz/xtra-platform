@@ -4,7 +4,7 @@ import { and, asc, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { parse, venueAccess, MANAGERS, SERVICE } from '../lib/http.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
-import { computeBill } from '../lib/pricing.js';
+import { computeBill, type Bill } from '../lib/pricing.js';
 import { config } from '../config.js';
 import { recordSpend, upsertGuest, ensureVenueGuest } from './guests-service.js';
 import { startPayment } from './payments.js';
@@ -18,9 +18,14 @@ type Tab = typeof schema.tabs.$inferSelect;
 
 /** The bill for a tab right now (or as frozen when paid). */
 export async function billFor(tab: Tab) {
-  const items = await db.select().from(schema.tabItems).where(eq(schema.tabItems.tabId, tab.id)).orderBy(asc(schema.tabItems.createdAt));
+  const [items, payments] = await Promise.all([
+    db.select().from(schema.tabItems).where(eq(schema.tabItems.tabId, tab.id)).orderBy(asc(schema.tabItems.createdAt)),
+    db.select().from(schema.tabPayments).where(eq(schema.tabPayments.tabId, tab.id)).orderBy(asc(schema.tabPayments.createdAt)),
+  ]);
+  const paid = payments.reduce((s, p) => s + p.amount, 0);
+  const out = (bill: Bill) => ({ items, payments, bill: { ...bill, paid, remaining: Math.max(0, bill.total - paid) } });
   if (tab.status === 'paid') {
-    return { items, bill: { subtotal: tab.subtotal, minSpend: tab.subtotal + tab.minSpendTopUp, minSpendTopUp: tab.minSpendTopUp, service: tab.service, vat: tab.vat, depositCredit: tab.depositCredit, total: tab.total } };
+    return out({ subtotal: tab.subtotal, minSpend: tab.subtotal + tab.minSpendTopUp, minSpendTopUp: tab.minSpendTopUp, service: tab.service, vat: tab.vat, depositCredit: tab.depositCredit, total: tab.total });
   }
   const [venue] = await db.select().from(schema.venues).where(eq(schema.venues.id, tab.venueId));
   let minSpend = 0;
@@ -38,10 +43,9 @@ export async function billFor(tab: Tab) {
       minSpend = zone?.minSpend ?? 0;
     }
   }
-  const bill = computeBill({
+  return out(computeBill({
     items: items.filter((i) => i.status !== 'void'), minSpend, serviceBps: venue.serviceBps, vatBps: venue.vatBps, depositPaid,
-  });
-  return { items, bill };
+  }));
 }
 
 async function loadTab(venueId: string, tabId: string) {
@@ -75,13 +79,16 @@ const openOnly = (t: Tab) => {
 export async function onTabPaid(tabId: string, method: (typeof schema.payMethod.enumValues)[number]) {
   const [tab] = await db.select().from(schema.tabs).where(eq(schema.tabs.id, tabId));
   if (!tab || tab.status !== 'open') return null;
-  const { bill } = await billFor(tab);
+  const { bill, payments } = await billFor(tab);
   return db.transaction(async (tx) => {
+    const rest = bill.total - bill.paid;
+    const methods = new Set([...payments.map((p) => p.method), ...(rest > 0 ? [method] : [])]);
     const [u] = await tx.update(schema.tabs).set({
       status: 'paid', subtotal: bill.subtotal, minSpendTopUp: bill.minSpendTopUp, service: bill.service, vat: bill.vat,
-      depositCredit: bill.depositCredit, total: bill.total, payMethod: method, paidAt: new Date(),
+      depositCredit: bill.depositCredit, total: bill.total, payMethod: methods.size > 1 ? 'mixed' : ([...methods][0] ?? method), paidAt: new Date(),
     }).where(and(eq(schema.tabs.id, tab.id), eq(schema.tabs.status, 'open'))).returning();
     if (!u) return null;
+    if (rest > 0) await tx.insert(schema.tabPayments).values({ venueId: u.venueId, tabId: u.id, amount: rest, method });
     if (u.guestId) await recordSpend(tx, u.venueId, u.guestId, bill.total + bill.depositCredit, u.id, 'bill', false);
     if (u.reservationId) await tx.update(schema.reservations).set({ status: 'completed' }).where(eq(schema.reservations.id, u.reservationId));
     return u;
@@ -273,6 +280,43 @@ export default async function tabs(app: FastifyInstance) {
   });
 
   /**
+   * Take part of the bill: split between friends, or part cash part card.
+   * When the parts reach the total the bill closes and the table is free.
+   */
+  app.post<{ Params: PT }>('/venues/:venueId/tabs/:tabId/payments', async (req) => {
+    const { user } = await venueAccess(req, req.params.venueId, SERVICE);
+    const b = parse(z.object({
+      method: z.enum(['card', 'cash', 'instapay', 'wallet']), amount: z.number().int().min(1), label: z.string().trim().max(40).default(''),
+    }), req.body);
+    const res = await db.transaction(async (tx) => {
+      // One payment at a time per bill, so two waiters can't overpay it.
+      await tx.execute(sql`select 1 from tabs where id = ${req.params.tabId} for update`);
+      const tab = await loadTab(req.params.venueId, req.params.tabId);
+      openOnly(tab);
+      const { bill } = await billFor(tab);
+      if (b.amount > bill.remaining) throw badRequest(`Only ${(bill.remaining / 100).toLocaleString('en-US')} EGP is left on this bill`, 'over_pay');
+      await tx.insert(schema.tabPayments).values({ venueId: tab.venueId, tabId: tab.id, amount: b.amount, method: b.method, label: b.label, takenBy: user.sub });
+      return { tab, closes: b.amount === bill.remaining };
+    });
+    if (res.closes) {
+      const paid = (await onTabPaid(res.tab.id, b.method)) ?? (await loadTab(req.params.venueId, req.params.tabId));
+      return { ...paid, ...(await billFor(paid)) };
+    }
+    return { ...res.tab, ...(await billFor(res.tab)) };
+  });
+
+  /* Undo a part payment typed by mistake (managers, open bills only). */
+  app.delete<{ Params: PT & { paymentId: string } }>('/venues/:venueId/tabs/:tabId/payments/:paymentId', async (req) => {
+    const { role } = await venueAccess(req, req.params.venueId, MANAGERS);
+    if (!MANAGERS.includes(role)) throw forbidden('Ask a manager to undo a payment');
+    const tab = await loadTab(req.params.venueId, req.params.tabId);
+    openOnly(tab);
+    const [d] = await db.delete(schema.tabPayments).where(and(eq(schema.tabPayments.id, req.params.paymentId), eq(schema.tabPayments.tabId, tab.id))).returning();
+    if (!d) throw notFound('Payment not found');
+    return { ...tab, ...(await billFor(tab)) };
+  });
+
+  /**
    * Close the bill. Cash / card machine / InstaPay / wallet are confirmed by
    * staff on the spot. "paymob" returns a link the guest pays on their phone.
    */
@@ -282,19 +326,20 @@ export default async function tabs(app: FastifyInstance) {
     openOnly(tab);
     const { method } = parse(z.object({ method: z.enum(['card', 'cash', 'instapay', 'wallet', 'paymob']) }), req.body);
     const { bill } = await billFor(tab);
-    if (method === 'paymob' && bill.total > 0) {
+    if (method === 'paymob' && bill.remaining > 0) {
       let customer = { firstName: 'Guest', lastName: '', email: null as string | null, phone: '+200000000000' };
       if (tab.guestId) {
         const [g] = await db.select().from(schema.guests).where(eq(schema.guests.id, tab.guestId));
         if (g) customer = { firstName: g.firstName, lastName: g.lastName, email: g.email, phone: g.phone };
       }
       const pay = await startPayment({
-        venueId: tab.venueId, purpose: 'tab', refId: tab.id, amount: bill.total, description: 'Table bill',
+        venueId: tab.venueId, purpose: 'tab', refId: tab.id, amount: bill.remaining, description: 'Table bill',
         customer, redirectUrl: `${config.publicAppUrl}/paid`,
       });
       return { status: 'pending', bill, ...pay };
     }
     const paid = await onTabPaid(tab.id, bill.total === 0 ? 'free' : method);
+    if (!paid) throw conflict('This bill is closed', 'tab_closed');
     return { status: 'paid', bill, tab: paid };
   });
 }

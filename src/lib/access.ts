@@ -55,6 +55,7 @@ const RULES: [method: string, test: RegExp, rule: Rule][] = [
   ['POST', /^\/reservations\/:id\/seat$/, { any: ['floor', 'bookings'], feature: 'reservations' }],
   ['*', /^\/reservations(\/|$)/, { any: ['bookings'], feature: 'reservations' }],
   ['*', /^\/checkin(\/|$)/, { any: ['door'] }],
+  ['*', /^\/shift(\/|$)/, { any: ['reports'], feature: 'ordering' }],
   ['*', /^\/kitchen(\/|$)/, { any: ['kitchen'], feature: 'ordering' }],
   ['GET', /^\/tabs$/, { any: ['floor', 'orders'], feature: 'ordering' }],
   ['POST', /^\/tabs$/, { any: ['floor', 'orders'], feature: 'ordering' }],

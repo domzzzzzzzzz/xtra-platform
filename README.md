@@ -61,6 +61,8 @@ built-in test checkout at `/dev/pay/:id`, and messages are saved to the
 - **Corporate / private events**: switch an event to *Invitation only* and nothing is sold. Sections can be *free seating* (sit anywhere in the section) or own seats. Invite one person to a zone or a seat picked on the map, or paste a list: own-seat sections hand out the next free seats row by row (`POST /venues/:id/events/:eventId/invites/bulk`).
 - **Passes**: every ticket QR is tied to its seat, table or standing zone. Opening the pass shows the map with a walking route from the entrance.
 - **Kitchen and bar**: each menu item goes to the kitchen or the bar. One *Send* from a waiter is one ticket number; the Kitchen screen shows it once per station, oldest first, turning yellow after 10 minutes and red after 20. *Ready* shows on the waiter's order. A device can print every new ticket (80 mm); Chrome started with `--kiosk-printing` prints without a dialog. Every venue gets a ready-made *Kitchen* role that only opens this screen.
+- **Split bills**: a bill can be paid in parts: split evenly, by items (service and VAT shared the same way), or any amount, each part by its own method. It closes when the parts reach the total and the table is free. Every bill keeps its payments in `tab_payments`, and reports count money by method from there.
+- **End of night** (Orders → End of night, needs Reports): money in by method for the night (until 6 AM), bills still open, items removed after they were sent, and a cash count that shows short/over. Each close is saved (`shift_closes`) and can be printed.
 - **Extras**: a menu item can have sets of extras (pick one, must pick one, or pick any), each choice with its own price. The price is added to the line and copied onto the bill.
 - **Marketing** only reaches guests who opted in on that channel (Law 151/2020).
 
@@ -77,6 +79,7 @@ All under `/api`. Staff send `Authorization: Bearer <token>` from `/auth/login`.
 | Bookings | `GET/POST /venues/:id/reservations`, `.../:rid/accept`, `/decline`, `/table`, `/cancel`, `/no-show`, `/complete`, live map `GET /venues/:id/tonight` |
 | Door | `POST /venues/:id/checkin` with the QR token (booking passes and tickets) |
 | Ordering | menu `GET/POST/PATCH /venues/:id/menu` (station kitchen/bar, extras), bills `GET/POST /venues/:id/tabs`, `.../:tabId/items` (with extras and a note), `/send` (one ticket number), `/remove`, `/items/:itemId/void`, `/pay` |
+| Split bills and end of night | `POST .../tabs/:tabId/payments` `{method, amount, label}` (closes the bill when the parts reach the total), `DELETE .../payments/:paymentId` (managers), `GET /venues/:id/shift?night=`, `POST .../shift/close` `{countedCash, note}`, `GET .../shift/history` |
 | Kitchen and bar | `GET /venues/:id/kitchen?station=kitchen\|bar\|all` (open tickets + ready in the last 20 min), `POST .../kitchen/:ticketNo/ready` `{station, ready}` |
 | Events | `GET/POST/PATCH /venues/:id/events`, seat map `PUT .../:eventId/map`, `GET .../sales`, `GET .../tickets` |
 | Promo codes | `GET/POST /venues/:id/promos`, `POST /venues/:id/promos/batch` (unique single-use codes, optionally locked to phones), `PATCH .../:promoId` |

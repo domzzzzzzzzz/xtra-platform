@@ -304,7 +304,7 @@ export type MenuOptionGroup = { name: string; required: boolean; multi: boolean;
 export type PickedOption = { group: string; name: string; price: number };
 
 export const tabStatus = pgEnum('tab_status', ['open', 'paid', 'void']);
-export const payMethod = pgEnum('pay_method', ['card', 'cash', 'instapay', 'wallet', 'paymob', 'free']);
+export const payMethod = pgEnum('pay_method', ['card', 'cash', 'instapay', 'wallet', 'paymob', 'free', 'mixed']);
 
 /** A running bill for a table. Totals are frozen when the tab is paid. */
 export const tabs = pgTable('tabs', {
@@ -352,6 +352,36 @@ export const tabItems = pgTable('tab_items', {
   addedBy: uuid('added_by'),
   createdAt: createdAt(),
 }, (t) => [index('tab_items_tab_idx').on(t.tabId)]);
+
+/**
+ * Money taken on a bill. A bill can be paid in parts (split between friends,
+ * part cash part card); it closes when the parts reach the total.
+ */
+export const tabPayments = pgTable('tab_payments', {
+  id: id(),
+  venueId: venueRef(),
+  tabId: uuid('tab_id').notNull().references(() => tabs.id, { onDelete: 'cascade' }),
+  amount: integer('amount').notNull(),
+  method: payMethod('method').notNull(),
+  /** Who paid this part, if staff typed it ("Omar"). */
+  label: text('label').notNull().default(''),
+  takenBy: uuid('taken_by'),
+  createdAt: createdAt(),
+}, (t) => [index('tab_payments_tab_idx').on(t.tabId), index('tab_payments_venue_idx').on(t.venueId, t.createdAt)]);
+
+/** End of night: what the till should hold against what was counted. */
+export const shiftCloses = pgTable('shift_closes', {
+  id: id(),
+  venueId: venueRef(),
+  night: date('night').notNull(),
+  /** Expected money by method, in piastres, as it was when closed. */
+  expected: jsonb('expected').$type<Record<string, number>>().notNull(),
+  bills: integer('bills').notNull().default(0),
+  countedCash: integer('counted_cash').notNull(),
+  note: text('note').notNull().default(''),
+  closedBy: uuid('closed_by'),
+  createdAt: createdAt(),
+}, (t) => [index('shift_closes_venue_idx').on(t.venueId, t.night)]);
 
 /* ---------------------------------------------------------------- ticketing */
 

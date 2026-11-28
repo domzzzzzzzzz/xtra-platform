@@ -832,3 +832,13 @@ video.cam{width:100%;border-radius:16px;background:#05061a;aspect-ratio:1;object
 .mpr{display:flex;align-items:center;gap:4px;font-size:13px;font-weight:600;color:var(--mute)}
 .mgrp .x{background:var(--panel2)}
 @media(max-width:600px){.kgrid{grid-template-columns:minmax(0,1fr)}.mch{grid-template-columns:minmax(0,1fr) 100px 40px}}
+.paid{margin-top:10px;border-top:1px solid var(--line);padding-top:6px}
+.paid .sum{align-items:center}.paid .sum span:first-child{flex:1}
+.x.sm{width:28px;height:28px;font-size:16px;margin-left:8px}
+.splitm{margin:8px 0 10px}
+.splitrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-weight:600;font-size:15px;margin-bottom:10px}
+.splitit{display:flex;flex-wrap:wrap;gap:6px}.splitit .chip.on{background:var(--teal);color:var(--chipink)}
+.splitamt{margin-top:12px}
+.warnbox{background:var(--yellow);color:var(--chipink);border-radius:12px;padding:10px 12px;margin-bottom:14px;display:flex;flex-direction:column;gap:2px;font-size:14px}
+.shdiff{font-weight:700;margin:6px 0 10px}.shdiff.ok{color:var(--teal)}.shdiff.short{color:var(--red)}.shdiff.over{color:var(--blue)}
+.sum .neg{color:var(--red)}

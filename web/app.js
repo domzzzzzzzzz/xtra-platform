@@ -165,7 +165,7 @@ const newOrder=()=>({rows:[],count:{},bill:false});
 function tabToOrder(t){const rows=[],by={},count={};(t.items||[]).forEach(i=>{if(i.status==='void'||!i.menuItemId)return;const k=lineKey(i);let r=by[k];
     if(!r){r=by[k]={key:k,mid:i.menuItemId,name:i.name,opts:i.options||[],note:i.note||'',unit:P2E(i.unitPrice),qty:0,fresh:0,ready:0,ids:[]};rows.push(r)}
     r.qty+=i.qty;if(i.status==='new')r.fresh+=i.qty;if(i.status==='served')r.ready+=i.qty;r.ids.push({id:i.id,st:i.status,at:i.createdAt});count[i.menuItemId]=(count[i.menuItemId]||0)+i.qty});
-  return {rows,count,bill:!!t.billRequestedAt,tabId:t.id,srv:t.bill}}
+  return {rows,count,bill:!!t.billRequestedAt,tabId:t.id,srv:t.bill,pays:t.payments||[]}}
 
 /* Events: API zones + seats to the editor's layout, ticket types and table zones. */
 const ZCOLS=['#2e3192','#0e5f6e','#7a1f5c','#8a5a00','#1f0055'];
@@ -432,11 +432,11 @@ function vDoor(){
 function vOrders(){
   const seated=S.bookings.filter(b=>b.status==='seated');
   if(!seated.find(b=>b.id===S.otable))S.otable=seated[0]?.id||null;
-  if(!S.otable)return head('Orders','')+`<div class="bigbox empty">No seated tables yet. Seat a booking or a walk-in from the floor to start an order.</div>`;
+  if(!S.otable)return head('Orders','',shiftBtn())+`<div class="bigbox empty">No seated tables yet. Seat a booking or a walk-in from the floor to start an order.</div>`;
   const b=B(S.otable),o=S.orders[b.id]||(S.orders[b.id]=newOrder()),bl=bill(b),A=AR(b.area);
   const unsent=o.rows.reduce((s,r)=>s+r.fresh,0),st=[...new Set(o.rows.filter(r=>r.fresh).map(r=>ITEMS[r.mid]?.station||'bar'))].sort((a,b)=>a===b?0:a==='kitchen'?-1:1);
   const pct=Math.min(100,bl.sub/Math.max(1,A.min)*100);
-  return head('Orders',`Table ${esc(TN(b.table))} · ${esc(G(b.gid).name)} · ${gN(b.party)}`)+
+  return head('Orders',`Table ${esc(TN(b.table))} · ${esc(G(b.gid).name)} · ${gN(b.party)}`,shiftBtn())+
   `<div class="tblpick">${seated.map(x=>`<button class="chip ${x.id===b.id?'on':''}" data-a="otable" data-v="${x.id}">${esc(TN(x.table))}${S.orders[x.id]?.bill?' · bill':''}</button>`).join('')}</div>
   <div class="order"><div><div class="cats">${Object.keys(MENU).map(c=>`<button class="chip ${S.cat===c?'on':''}" data-a="cat" data-v="${c}">${c==='Soft'?'Soft drinks':c}</button>`).join('')}</div>
   <div class="menu">${Object.values(ITEMS).filter(i=>i.cat===S.cat).map(i=>`<button class="item" data-a="add" data-v="${i.id}"><b>${esc(i.name)}</b><span class="num mute">${egp(i.price)}${i.opts.length?' <span class="ix">+ extras</span>':''}</span>${o.count[i.id]?`<span class="q">${o.count[i.id]}</span>`:''}</button>`).join('')}</div></div>
@@ -659,8 +659,7 @@ function openSheet(d,refresh){
     body=`<p class="mute" style="margin:0 0 12px">${esc(G(b.gid).name)} · ${gN(b.party)} · ${b.code}</p>${o.rows.map(r=>`<div class="sum"><span>${r.qty} × ${esc(r.name)}${r.opts.length?` <small class="mute">${esc(optTxt(r.opts))}</small>`:''}</span><span class="num">${egp(r.unit*r.qty)}</span></div>`).join('')}
     <div style="border-top:1px solid var(--line);margin:8px 0"></div><div class="sum"><span>Subtotal</span><span class="num">${egp(bl.sub)}</span></div>${bl.top?`<div class="sum"><span>Minimum spend top-up</span><span class="num">${egp(bl.top)}</span></div>`:''}<div class="sum"><span>Service 12%</span><span class="num">${egp(bl.svc)}</span></div><div class="sum"><span>VAT 14%</span><span class="num">${egp(bl.vat)}</span></div>${bl.dep?`<div class="sum neg"><span>Deposit paid (${esc(b.depVia)})</span><span class="num">−${egp(bl.dep)}</span></div>`:''}<div class="sum tot"><span>To pay</span><span class="num">${egp(bl.total)}</span></div>
     ${bl.top?`<p class="sent">The table is ${egp(bl.top)} under the ${egp(bl.min)} minimum. Add more to the order or charge the top-up.</p>`:''}
-    <h3 style="margin-top:18px">Paid by</h3><div class="paym">${[['Card','POS terminal'],['Cash','Count at the till'],['InstaPay','Show the venue QR'],['Wallet','Vodafone Cash and others']].map(([k,s])=>`<button class="${S.pay===k?'on':''}" data-a="pay" data-v="${k}">${k}<small>${s}</small></button>`).join('')}</div>
-    <div class="stack" style="margin-top:4px"><button class="btn teal" data-a="paid" data-v="${b.id}">Mark paid and free table</button>${S.orders[b.id]?.bill?'':`<button class="btn ghost" data-a="askbill" data-v="${b.id}">Show bill to table</button>`}</div>`;}
+    ${payBox(b,o,bl)}`;}
   if(d.k==='new'){title='New booking';body=`<form id="newb" class="stack" style="margin-top:0"><label class="f">Guest name<input id="nname" required autocomplete="off" placeholder="Full name"></label><div class="two"><div class="f telf">WhatsApp${telField({id:'nphone',req:true,label:'WhatsApp number'})}</div><label class="f">Instagram<input id="nig" autocomplete="off" placeholder="@handle"></label></div><label class="f">Email<input id="nemail" type="email" autocomplete="off" placeholder="Optional"></label><div class="two"><label class="f">Time<select id="ntime">${slots().map(m=>`<option value="${m}">${t12(m)}</option>`).join('')}</select></label><label class="f">Guests<input id="nparty" type="number" min="1" max="20" value="4" inputmode="numeric"></label></div><label class="f">Area<select id="narea">${V().areas.map(a=>`<option value="${a.id}">${esc(a.name)} · min ${egp(a.min)}</option>`).join('')}</select></label><label class="f">Deposit<select id="ndep"><option value="link">Send payment link</option><option value="paid">Already paid</option><option value="none">No deposit</option></select></label><label class="f">Source<select id="nsrc">${['Phone call','WhatsApp','Instagram','Promoter · Karim','Concierge'].map(s=>`<option>${s}</option>`).join('')}</select></label><label class="f">Note<input id="nnote" autocomplete="off" placeholder="Birthday, allergies, preferred table"></label><button class="btn" type="submit">Book and notify guest</button><p class="sent" style="margin:0">We pick the best free table in the area and message the guest by ${{both:'email and WhatsApp',wa:'WhatsApp',email:'email'}[CFG().notify]}.</p></form>`}
   if(d.k==='guest'){const g=G(d.id),hist=S.bookings.filter(b=>b.gid===g.id);title=esc(g.name);
     body=`<p style="margin:0 0 6px"><span class="tag" style="background:${tierOf(g).color};color:var(--chipink)">${tierOf(g).name}</span> <span class="mute">${points(g).toLocaleString('en-US')} points</span></p><p class="mute num" style="margin:0">${esc(g.phone)} · ${esc(g.email||'no email')} · ${esc(g.ig||'')}</p><div class="facts"><div><span>Visits</span><b>${g.visits}</b></div><div><span>Total spend</span><b class="num">${egp(g.spend)}</b></div><div><span>Last visit</span><b>${g.last}</b></div><div><span>No-shows</span><b>${g.noShow}</b></div></div>
@@ -672,7 +671,7 @@ function openSheet(d,refresh){
   if(d.k==='more'){title='More';body=`<div class="stack" style="margin-top:0">${ROLE==='manager'?NAV.filter(n=>MORE.includes(n[0])&&CAN(n[2])).map(([k,l])=>`<button class="btn ghost wide" style="justify-content:flex-start" data-a="go" data-v="${k}">${ic(k)}${l}</button>`).join(''):''}<div style="margin-top:12px">${whoBox()}</div></div>`}
   if(d.k==='venue'){title='Your venues';body=`<p class="mute" style="margin:0 0 12px">One XTRA account, many venues. Each has its own floor map, slots, staff and booking link.</p><div class="stack" style="margin-top:0">${ME.venues.map((v,i)=>`<button class="btn ${i===S.vi?'':'ghost'} wide" style="justify-content:space-between" data-a="setvenue" data-v="${i}"><span>${esc(v.name)}</span><span style="font-weight:400;opacity:.8">${esc(ME.user.isSuperAdmin?(v.active===false?'Paused':''):v.roleName||ROLE_NAME[v.role]||'')}</span></button>`).join('')}</div>
     ${ME.user.isSuperAdmin?`<button class="btn ghost wide" style="margin-top:16px" data-a="go" data-v="admin">${ic('admin')}New venue, roles and accounts in XTRA admin</button>`:''}`}
-  if(!title){const r=orderSheet(d);if(r){title=r[0];body=r[1]}}
+  if(!title){const r=orderSheet(d)||shiftSheet(d);if(r){title=r[0];body=r[1]}}
   if(!title){const r=growthSheet(d);if(r){title=r[0];body=r[1]}}
   const sh=$('#sheet'),st=sh.querySelector('.bd')?.scrollTop||0;
   sh.innerHTML=`<div class="hd"><h2 id="sheetTitle">${title}</h2><button class="x" data-a="close" aria-label="Close">×</button></div><div class="bd">${body}</div>`;
@@ -751,7 +750,13 @@ send:async()=>{const t=await tabCall('send',{});if(t){await refresh();toast(t.ti
 openbill:v=>openSheet({k:'bill',id:v}),
 askbill:v=>{const id=tabOf(v);if(id)act(()=>POST(vurl(`/tabs/${id}/ask-bill`)),'Bill shown. Table marked on the floor.')},
 pay:v=>{S.pay=v;render()},
-paid:v=>{const b=B(v),id=tabOf(v);if(!id)return;closeSheet();act(()=>POST(vurl(`/tabs/${id}/pay`),{method:S.pay.toLowerCase()}),`Paid by ${S.pay}. Table ${TN(b.table)} is free.`)},
+paid:async v=>{const b=B(v),id=tabOf(v),o=S.orders[v];if(!id||S.paying)return;const left=o?.srv?o.srv.remaining:Math.round(bill(b).total*100),amt=Math.min(left,splitAmt(o,left));
+  if(amt<=0&&left>0)return toast('Pick what this person pays');S.paying=true;
+  try{if(amt>=left&&!(o?.pays||[]).length){closeSheet();await act(()=>POST(vurl(`/tabs/${id}/pay`),{method:S.pay.toLowerCase()}),`Paid by ${S.pay}. Table ${TN(b.table)} is free.`)}
+  else{const t=await POST(vurl(`/tabs/${id}/payments`),{method:S.pay.toLowerCase(),amount:amt});
+    if(t.status==='paid'){S.split=null;closeSheet();await refresh();toast(`Bill paid. Table ${TN(b.table)} is free.`)}
+    else{S.orders[v]=tabToOrder(t);const sp=S.split;if(sp){sp.amt=null;sp.sel={};if(sp.mode==='even')sp.done=(sp.done||0)+1}openSheet(S.sheet,true);toast(`Took ${egp2(amt/100)} by ${S.pay}. ${egp2(t.bill.remaining/100)} left.`)}}}
+  catch(e){toast(e.message)}S.paying=false},
 wp:v=>{const el=$('#wparty');el.textContent=Math.max(1,Math.min(20,+el.textContent+ +v))},
 gtag:v=>{const [id,t]=v.split(':'),g=G(id);g.tags=g.tags.includes(t)?g.tags.filter(x=>x!==t):[...g.tags,t];render();
   act(()=>PATCH(vurl(`/guests/${id}`),{tags:g.tags.filter(x=>x!=='Blocked'),blocked:g.tags.includes('Blocked')}),null,{reload:false})},
@@ -1846,3 +1851,65 @@ document.addEventListener('input',e=>{const el=e.target;if(!S)return;
   if(el.id==='optnote'&&S.opk){S.opk.note=el.value;return}
   const k=el.dataset.me;if(!k||!S.medit)return;const E=S.medit,[t,a,b]=k.split(':');
   if(t==='g')E.options[+a].name=el.value;else if(t==='c')E.options[+a].choices[+b].name=el.value;else if(t==='p')E.options[+a].choices[+b].price=Math.round((parseFloat(el.value)||0)*100);else E[k]=el.value});
+
+/* ---------- split bills and part payments ---------- */
+/** What the next person pays, in piastres: the whole rest, an even share, their items, or a typed amount. */
+function splitAmt(o,left){const sp=S.split;if(!sp||sp.tab!==o?.tabId)return left;if(sp.amt!=null)return sp.amt;if(sp.mode==='all')return left;
+  const tot=o.srv?o.srv.total:left;
+  if(sp.mode==='even'){const share=Math.round(tot/sp.n),last=(sp.done||0)>=sp.n-1;return last||share>left||left-share<sp.n?left:share}
+  const sub=o.srv?.subtotal||1,sel=o.rows.reduce((s,r,i)=>s+(sp.sel[i]||0)*Math.round(r.unit*100),0);
+  return Math.min(left,Math.round(sel/sub*tot))}
+function payBox(b,o,bl){
+  const left=o.srv?o.srv.remaining:Math.round(bl.total*100),pays=o.pays||[];
+  if(!S.split||S.split.tab!==o.tabId)S.split={tab:o.tabId,mode:'all',n:2,sel:{},amt:null,done:0};const sp=S.split,amt=Math.min(left,splitAmt(o,left));
+  const ML={card:'Card',cash:'Cash',instapay:'InstaPay',wallet:'Wallet',paymob:'Online',free:'Free'};
+  return `${pays.length?`<div class="paid">${pays.map(p=>`<div class="sum"><span>Paid · ${ML[p.method]||p.method}${p.label?' · '+esc(p.label):''}</span><span class="num">${egp2(p.amount/100)}</span>${CAN('setup')?`<button class="x sm" data-a="unpay" data-v="${p.id}" aria-label="Undo this payment">×</button>`:''}</div>`).join('')}<div class="sum tot"><span>Left to pay</span><span class="num">${egp2(left/100)}</span></div></div>`:''}
+  ${left>0?`<h3 style="margin-top:18px">Who pays now</h3><div class="seg splitm">${[['all',pays.length?'The rest':'Whole bill'],['even','Split evenly'],['items','By items']].map(([k,l])=>`<button type="button" class="${sp.mode===k?'on':''}" data-a="splitm" data-v="${k}">${l}</button>`).join('')}</div>
+  ${sp.mode==='even'?`<div class="splitrow"><span>Between</span><div class="stepper"><button type="button" data-a="splitn" data-v="-1" aria-label="Fewer people">−</button><b class="num">${sp.n}</b><button type="button" data-a="splitn" data-v="1" aria-label="More people">+</button></div><span>people · ${egp2(Math.round((o.srv?.total||left)/sp.n)/100)} each${sp.done?` · ${sp.done} paid`:''}</span></div>`:''}
+  ${sp.mode==='items'?`<div class="splitit">${o.rows.map((r,i)=>`<button type="button" class="chip ${sp.sel[i]?'on':''}" data-a="splititem" data-v="${i}">${sp.sel[i]?sp.sel[i]+'/':''}${r.qty} × ${esc(r.name)}</button>`).join('')}</div><p class="mute" style="font-size:13px;margin:6px 0 0">Tap an item once for each one this person had. Service and VAT are shared the same way.</p>`:''}
+  <label class="f splitamt">Amount (EGP)<input id="splitamt" type="number" min="0" step="0.01" inputmode="decimal" value="${(amt/100).toFixed(2).replace(/\.00$/,'')}"></label>
+  <h3 style="margin-top:14px">Paid by</h3><div class="paym">${[['Card','POS terminal'],['Cash','Count at the till'],['InstaPay','Show the venue QR'],['Wallet','Vodafone Cash and others']].map(([k,s])=>`<button class="${S.pay===k?'on':''}" data-a="pay" data-v="${k}">${k}<small>${s}</small></button>`).join('')}</div>
+  <div class="stack" style="margin-top:4px"><button class="btn teal" data-a="paid" data-v="${b.id}">${amt>=left?(pays.length?`Take the last ${egp2(left/100)} and free table`:'Mark paid and free table'):`Take ${egp2(amt/100)} by ${S.pay}`}</button>${S.orders[b.id]?.bill?'':`<button class="btn ghost" data-a="askbill" data-v="${b.id}">Show bill to table</button>`}</div>`:''}`}
+Object.assign(ACT,{
+splitm:v=>{S.split.mode=v;S.split.amt=null;openSheet(S.sheet,true)},
+splitn:v=>{S.split.n=Math.max(2,Math.min(30,S.split.n+ +v));S.split.amt=null;openSheet(S.sheet,true)},
+splititem:v=>{const sp=S.split,r=S.orders[S.sheet.id]?.rows[+v];if(!r)return;sp.sel[v]=((sp.sel[v]||0)+1)%(r.qty+1);sp.amt=null;openSheet(S.sheet,true)},
+unpay:async v=>{const b=S.sheet&&B(S.sheet.id),id=b&&tabOf(b.id);if(!id)return;try{const t=await DEL(vurl(`/tabs/${id}/payments/${v}`));S.orders[b.id]=tabToOrder(t);openSheet(S.sheet,true);toast('Payment removed')}catch(e){toast(e.message)}},
+});
+document.addEventListener('input',e=>{if(e.target.id==='splitamt'&&S?.split){const n=Math.round((parseFloat(e.target.value)||0)*100);S.split.amt=n;
+  const btn=document.querySelector('#sheet [data-a="paid"]'),o=S.orders[S.sheet?.id],left=o?.srv?.remaining;if(btn&&left!=null)btn.textContent=n>=left?'Take the rest and free table':`Take ${egp2(n/100)} by ${S.pay}`}});
+
+/* ---------- end of night ---------- */
+const shiftBtn=()=>CAN('reports')?`<button class="btn ghost" data-a="shift">End of night</button>`:'';
+const SH={data:null,count:''};
+const MLONG={card:'Card machine',cash:'Cash',instapay:'InstaPay',wallet:'Mobile wallet',paymob:'Paid online'};
+function shiftSheet(d){if(d.k!=='shift')return null;const D=SH.data;
+  if(!D)return ['End of night','<div class="loading">Adding up the night…</div>'];
+  const cash=D.byMethod.cash||0,counted=SH.count===''?null:Math.round(parseFloat(SH.count)*100),diff=counted==null?null:counted-cash;
+  return ['End of night',`<p class="mute" style="margin:0 0 12px">${prettyNight(D.night)} · the night runs until 6 AM</p>
+  ${D.open.length?`<div class="warnbox"><b>${D.open.length} bill${D.open.length===1?' is':'s are'} still open</b><span>${D.open.map(t=>t.table?'Table '+esc(t.table):esc(t.guest||'Walk-in')).join(', ')}. Close them before you count.</span></div>`:''}
+  <h3>Money in</h3>${Object.keys(MLONG).filter(k=>D.byMethod[k]).map(k=>`<div class="sum"><span>${MLONG[k]}</span><span class="num">${egp2(D.byMethod[k]/100)}</span></div>`).join('')||'<div class="sum"><span class="mute">Nothing taken yet</span><span></span></div>'}
+  <div class="sum tot"><span>Total</span><span class="num">${egp2(D.taken/100)}</span></div>
+  <div class="facts"><div><span>Bills paid</span><b>${D.bills}</b></div><div><span>Service</span><b class="num">${egp(D.service/100)}</b></div><div><span>VAT</span><b class="num">${egp(D.vat/100)}</b></div><div><span>Removed after sending</span><b class="num">${D.voids.items?`${D.voids.items} · ${egp(D.voids.total/100)}`:'None'}</b></div></div>
+  <h3 style="margin-top:18px">Count the cash</h3>
+  <label class="f">Cash in the till (EGP)<input id="shcount" type="number" min="0" step="0.01" inputmode="decimal" value="${esc(SH.count)}" placeholder="${(cash/100).toFixed(0)}"></label>
+  <p class="shdiff ${diff==null?'':diff===0?'ok':diff<0?'short':'over'}" id="shdiff">${diff==null?`Should be ${egp2(cash/100)}.`:diff===0?'Matches. Nothing missing.':diff<0?`Short by ${egp2(-diff/100)}.`:`Over by ${egp2(diff/100)}.`}</p>
+  <label class="f">Note<input id="shnote" maxlength="300" autocomplete="off" placeholder="Optional, like who counted"></label>
+  <div class="stack"><button class="btn teal" data-a="shclose">Close the night</button><button class="btn ghost" data-a="shprint">Print</button></div>
+  ${D.closes.length?`<h3 style="margin-top:18px">Closed tonight</h3>${D.closes.map(c=>{const df=c.countedCash-(c.expected.cash||0);return `<div class="sum"><span>${new Date(c.createdAt).toLocaleTimeString('en-GB',{timeZone:TZ,hour:'2-digit',minute:'2-digit'})} · counted ${egp2(c.countedCash/100)}</span><span class="num ${df<0?'neg':''}">${df===0?'exact':(df<0?'−':'+')+egp2(Math.abs(df)/100)}</span></div>`}).join('')}`:''}`]}
+const prettyNight=d=>new Date(d+'T12:00:00Z').toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',timeZone:'UTC'});
+async function shLoad(){try{SH.data=await GET(vurl('/shift'))}catch(e){toast(e.message);closeSheet();return}if(S.sheet?.k==='shift')openSheet(S.sheet,true)}
+Object.assign(ACT,{
+shift:()=>{SH.data=null;SH.count='';openSheet({k:'shift'});shLoad()},
+shclose:async()=>{if(SH.count===''){toast('Type the cash you counted');$('#shcount')?.focus();return}
+  const r=await act(()=>POST(vurl('/shift/close'),{night:SH.data.night,countedCash:Math.round(parseFloat(SH.count)*100),note:$('#shnote')?.value||''}),r=>r.cashDifference===0?'Night closed. Cash matches.':`Night closed. Cash ${r.cashDifference<0?'short':'over'} by ${egp2(Math.abs(r.cashDifference)/100)}.`,{reload:false});
+  if(r)shLoad()},
+shprint:()=>{const D=SH.data;if(!D)return;const f=document.createElement('iframe');f.style.cssText='position:fixed;width:0;height:0;border:0';document.body.appendChild(f);
+  const row=(a,b)=>`<div style="display:flex;justify-content:space-between"><span>${a}</span><b>${b}</b></div>`;
+  f.contentDocument.write(`<!doctype html><html><head><meta charset="utf-8"><title>End of night</title><style>@page{size:80mm auto;margin:3mm}body{font:14px/1.5 system-ui,sans-serif;width:72mm;margin:0;color:#000}h1{font-size:18px;margin:0 0 4px}hr{border:0;border-top:1px dashed #000}</style></head><body>
+  <h1>${esc(VENUES[S.vi].name)}</h1><div>End of night · ${prettyNight(D.night)}</div><hr>${Object.keys(MLONG).filter(k=>D.byMethod[k]).map(k=>row(MLONG[k],egp2(D.byMethod[k]/100))).join('')}<hr>${row('Total',egp2(D.taken/100))}${row('Bills',D.bills)}${row('Service',egp2(D.service/100))}${row('VAT',egp2(D.vat/100))}${row('Removed after sending',D.voids.items)}${SH.count!==''?'<hr>'+row('Cash counted',egp2(parseFloat(SH.count)))+row('Difference',egp2(parseFloat(SH.count)-(D.byMethod.cash||0)/100)):''}<hr><div>Printed ${new Date().toLocaleString('en-GB',{timeZone:TZ})}</div></body></html>`);
+  f.contentDocument.close();setTimeout(()=>{try{f.contentWindow.print()}catch(_){}setTimeout(()=>f.remove(),60000)},150)},
+});
+document.addEventListener('input',e=>{if(e.target.id!=='shcount'||!SH.data)return;SH.count=e.target.value;const cash=SH.data.byMethod.cash||0,el=$('#shdiff');if(!el)return;
+  if(SH.count===''){el.className='shdiff';el.textContent=`Should be ${egp2(cash/100)}.`;return}const diff=Math.round(parseFloat(SH.count)*100)-cash;
+  el.className='shdiff '+(diff===0?'ok':diff<0?'short':'over');el.textContent=diff===0?'Matches. Nothing missing.':diff<0?`Short by ${egp2(-diff/100)}.`:`Over by ${egp2(diff/100)}.`});

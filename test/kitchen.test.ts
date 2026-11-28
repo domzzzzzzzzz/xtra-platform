@@ -100,3 +100,50 @@ describe('kitchen and bar tickets', () => {
     api.setToken(owner);
   });
 });
+
+describe('split bills and end of night', () => {
+  let tab = '', mojito = '';
+  it('takes a bill in parts, closes it when paid in full', async () => {
+    mojito = (await api.get(`${v()}/menu`)).body.find((m: any) => m.name === 'Mojito').id;
+    tab = (await api.post(`${v()}/tabs`, { guestName: 'Friends', partySize: 3 })).body.id;
+    const t = await api.post(`${v()}/tabs/${tab}/items`, { items: [{ menuItemId: mojito, qty: 3 }] });
+    // 960 + 12% service 115.20 + 14% VAT 150.53 = 1,225.73
+    expect(t.body.bill).toMatchObject({ total: 122573, paid: 0, remaining: 122573 });
+    const p1 = await api.post(`${v()}/tabs/${tab}/payments`, { method: 'cash', amount: 40858, label: 'Omar' });
+    expect(p1.body).toMatchObject({ status: 'open' });
+    expect(p1.body.bill.remaining).toBe(81715);
+    expect((await api.post(`${v()}/tabs/${tab}/payments`, { method: 'card', amount: 90000 })).status).toBe(400);
+    await api.post(`${v()}/tabs/${tab}/payments`, { method: 'card', amount: 40858 });
+    const last = await api.post(`${v()}/tabs/${tab}/payments`, { method: 'instapay', amount: 40857 });
+    expect(last.body).toMatchObject({ status: 'paid', payMethod: 'mixed' });
+    expect(last.body.payments).toHaveLength(3);
+    expect((await api.post(`${v()}/tabs/${tab}/payments`, { method: 'cash', amount: 1 })).status).toBe(409);
+  });
+
+  it('paying the rest in one go records the rest only', async () => {
+    const t2 = (await api.post(`${v()}/tabs`, { guestName: 'Pair' })).body.id;
+    await api.post(`${v()}/tabs/${t2}/items`, { items: [{ menuItemId: mojito, qty: 1 }] });
+    await api.post(`${v()}/tabs/${t2}/payments`, { method: 'card', amount: 10000 });
+    const paid = await api.post(`${v()}/tabs/${t2}/pay`, { method: 'cash' });
+    expect(paid.body.status).toBe('paid');
+    const full = await api.get(`${v()}/tabs/${t2}`);
+    expect(full.body.payments.map((p: any) => [p.method, p.amount])).toEqual([['card', 10000], ['cash', full.body.bill.total - 10000]]);
+  });
+
+  it('end of night adds up by method and saves the cash count', async () => {
+    const s = await api.get(`${v()}/shift`);
+    expect(s.status).toBe(200);
+    expect(s.body.byMethod.instapay).toBe(40857);
+    expect(s.body.byMethod.card).toBe(50858);
+    expect(s.body.bills).toBe(2);
+    expect(s.body.open.length).toBeGreaterThan(0); // the kitchen test bill is still open
+    const cash = s.body.byMethod.cash;
+    const c = await api.post(`${v()}/shift/close`, { countedCash: cash - 5000, note: 'Short 50' });
+    expect(c.status).toBe(201);
+    expect(c.body.cashDifference).toBe(-5000);
+    expect((await api.get(`${v()}/shift/history`)).body[0]).toMatchObject({ countedCash: cash - 5000, cashDifference: -5000, closedByName: 'Owner' });
+    await api.login('w@k.eg', 'password1');
+    expect((await api.get(`${v()}/shift`)).status).toBe(403);
+    api.setToken(owner);
+  });
+});

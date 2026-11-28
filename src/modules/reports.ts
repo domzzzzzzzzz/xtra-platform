@@ -31,8 +31,8 @@ export default async function reports(app: FastifyInstance) {
     const [cur, prev, byMethod, days, topGuests, topItems, events] = await Promise.all([
       totals(v, from, to),
       totals(v, prevFrom, prevTo),
-      db.execute(sql`select pay_method as method, count(*) as n, coalesce(sum(total),0) as total from tabs
-        where venue_id = ${v} and status = 'paid' and ${night(sql`paid_at`)} between ${from} and ${to} group by pay_method order by total desc`),
+      db.execute(sql`select p.method, count(distinct p.tab_id) as n, coalesce(sum(p.amount),0) as total from tab_payments p join tabs t on t.id = p.tab_id
+        where p.venue_id = ${v} and t.status = 'paid' and ${night(sql`t.paid_at`)} between ${from} and ${to} group by p.method order by total desc`),
       db.execute(sql`with d as (select generate_series(${from}::date, ${to}::date, interval '1 day')::date as day)
         select to_char(d.day, 'YYYY-MM-DD') as day,
           (select coalesce(sum(total),0) from tabs where venue_id = ${v} and status = 'paid' and ${night(sql`paid_at`)} = d.day) as tables,
