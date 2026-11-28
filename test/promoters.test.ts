@@ -86,3 +86,25 @@ describe('promoters and the guest list', () => {
     expect((await api.get(`/api/public/promoter/${karim.token}`)).status).toBe(404);
   });
 });
+
+describe('sharing the booking page', () => {
+  it('remembers where a booking came from', async () => {
+    const b = await api.post('/api/public/venues/promo-club/bookings', { date: tomorrow(), slotId, src: 'instagram', booker: { name: 'Insta Guest', phone: '01088888888' } });
+    const [r] = await db.select().from(schema.reservations).where(eq(schema.reservations.code, b.body.code));
+    expect(r.source).toBe('Instagram');
+    const b2 = await api.post('/api/public/venues/promo-club/bookings', { date: tomorrow(), slotId, src: 'weird', booker: { name: 'Other', phone: '01088888889' } });
+    expect((await db.select().from(schema.reservations).where(eq(schema.reservations.code, b2.body.code)))[0].source).toBe('online');
+  });
+
+  it('venue links carry a title, preview and schema.org data; the website button script is served', async () => {
+    const page = await app.inject({ method: 'GET', url: '/book/promo-club' });
+    expect(page.body).toContain('<title>Book a table · Promo Club</title>');
+    expect(page.body).toContain('"@type":"Restaurant"');
+    expect(page.body).toContain('ReserveAction');
+    const none = await app.inject({ method: 'GET', url: '/book/nope' });
+    expect(none.body).toContain('<title>XTRA</title>');
+    const js = await app.inject({ method: 'GET', url: '/embed.js' });
+    expect(js.headers['content-type']).toContain('javascript');
+    expect(js.body).toContain("/book/'+encodeURIComponent(slug)+'?src=website'");
+  });
+});

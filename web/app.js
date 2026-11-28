@@ -561,7 +561,7 @@ function vPage(){
   <div class="note"><i>2</i><div><h3>Then their guests, then review</h3><p>Every +1 gives the same details: name, WhatsApp, email, Instagram and gender.</p></div></div>
   <div class="note"><i>3</i><div><h3>The request is in review</h3><p>You accept or decline from Bookings. They hear back by ${{both:'email and WhatsApp',wa:'WhatsApp',email:'email'}[c.notify]}.</p></div></div>
   <div class="note"><i>4</i><div><h3>Accepted guests pay from their booking link</h3><p>Their page shows the status and the deposit. Once paid they get the QR pass.</p></div></div>
-  <div class="card" style="margin-top:6px"><span class="mute" style="font-size:14px">Your booking link, share it on Instagram and WhatsApp</span><div style="font-weight:700;overflow-wrap:anywhere"><a href="${link}" target="_blank" rel="noopener" style="color:inherit">${esc(link)}</a></div></div></div>`;
+  ${shareCard(VV)}</div>`;
   return head('Booking page','What your guests see. This phone is live: a request sent here lands in Bookings.')+`<div class="gp">${side}${phone}</div>`;
 }
 let statusTimer=null;
@@ -581,7 +581,7 @@ gparea:v=>{const gp=S.gp;gp.area=v;if(gp.table&&pubEL(gp.table)?.zone!==v)gp.tab
 gptable:v=>{const gp=S.gp,t=pubEL(v);if(t.seats<gp.party){toast(`Table ${t.name} has ${t.seats} seats. Pick a bigger one or fewer guests.`);return}gp.table=gp.table===v?null:v;if(gp.table&&t.zone)gp.area=t.zone;render()},
 gpsubmit:async()=>{const gp=S.gp,f=gp.f;if(gp.busy)return;gp.busy=true;gp.err='';render();
   const P=o=>({name:o.name.trim(),...(o.phone.trim()?{phone:o.phone.trim()}:{}),...(/^\S+@\S+\.\S+$/.test(o.email)?{email:o.email.trim()}:{}),...(o.ig.trim()?{instagram:o.ig.trim().replace(/^@/,'')}:{}),...(o.gender?{gender:o.gender.toLowerCase()}:{})});
-  try{const r=await pubPost(`/venues/${PUB.slug}/bookings`,{...(REF()?{ref:REF()}:{}),date:PDAYS[gp.day][3],slotId:gp.slot,...(gp.area?{zoneId:gp.area}:{}),...(gp.table?{tableId:gp.table}:{}),partySize:gp.party,
+  try{const r=await pubPost(`/venues/${PUB.slug}/bookings`,{...(REF()?{ref:REF()}:{}),...(SRC()?{src:SRC()}:{}),date:PDAYS[gp.day][3],slotId:gp.slot,...(gp.area?{zoneId:gp.area}:{}),...(gp.table?{tableId:gp.table}:{}),partySize:gp.party,
       booker:{...P(f),whatsappOptIn:!!f.consent,emailOptIn:!!f.consent},guests:PUB.info.askNames?gp.others.map(P):[]});
     gp.code=r.code;gp.step='status';gp.busy=false;PUB.days={};
     if(GUEST)history.replaceState(null,'','/b/'+r.code);
@@ -1480,7 +1480,7 @@ function guestView(){const G2=GUEST;
   return guestShell('');
 }
 async function bootGuest(path){
-  const [,k,a]=path.split('/');REF();document.body.classList.add('guestmode');$('#guest').hidden=false;
+  const [,k,a]=path.split('/');REF();SRC();document.body.classList.add('guestmode');$('#guest').hidden=false;
   VENUES=[];S={vi:0,gp:newGP(),evp:newEVP(),sheet:null,events:[],bookings:[],guests:[],orders:{}};
   const map={book:'book',b:'status',e:'event',o:'order',t:'pass',p:'pass',me:'me',paid:'paid',pl:'promoter'};GUEST={kind:map[k]||'paid'};if(GUEST.kind==='book')GUEST.slug=decodeURIComponent(a);
   await loadMe();render();
@@ -1696,6 +1696,7 @@ function vReports(){const r=repLoad(),[f,t]=repRange(REP.range);
   const pays=`<section class="rcard"><h3>How guests paid</h3>${M.byMethod.length?`<div class="rbars">${M.byMethod.map(m=>`<div class="rbar"><div><span>${METHOD[m.method]||esc(m.method)}</span><b class="num">${P2(m.total)}</b></div><div class="rtrack"><i style="width:${m.total/mt*100}%"></i></div><small>${pl(m.bills,'bill')} · ${rpct(m.total,mt)}%</small></div>`).join('')}</div>`:'<div class="empty">No paid bills in these dates.</div>'}</section>`;
   const fun=[['Requests',B.requests],['Confirmed',B.confirmed],['Came',B.showed]],fm=Math.max(1,B.requests);
   const book=showR?`<section class="rcard"><h3>Bookings</h3><div class="rfun">${fun.map(([l,v],i)=>`<div class="rfr"><span>${l}</span><div class="rtrack"><i style="width:${v/fm*100}%;opacity:${1-i*.22}"></i></div><b class="num">${v}</b></div>`).join('')}</div>
+    ${(B.bySource||[]).length?`<h4 class="rsrc">Where they booked</h4><div class="rbars">${B.bySource.map(x=>`<div class="rbar"><div><span>${esc(x.source==='online'?'Booking link':x.source)}</span><b class="num">${x.bookings}</b></div><div class="rtrack"><i style="width:${x.bookings/Math.max(1,B.bySource[0].bookings)*100}%"></i></div></div>`).join('')}</div>`:''}
     <div class="rmini">${[['No-shows',`${B.noShows}`,delta(B.noShows,PV.noShows,{down:true}),`${B.noShowRate}% of confirmed`],['Declined',B.declined,'',''],['Cancelled',B.cancelled,'',''],['Waiting',B.waiting,'','to accept or pay']].map(([l,v,d,s])=>`<div><span>${l}</span><b class="num">${v}</b>${d}${s?`<small>${s}</small>`:''}</div>`).join('')}</div></section>`:'';
   const wd=[0,0,0,0,0,0,0],wn=[0,0,0,0,0,0,0];r.days.forEach(d=>{const k=(new Date(d.day+'T12:00:00Z').getUTCDay()+6)%7;wd[k]+=d.tables+d.tickets;wn[k]++});
   const avg=wd.map((v,i)=>wn[i]?v/wn[i]:0),am=Math.max(1,...avg),best=avg.indexOf(Math.max(...avg));
@@ -2008,3 +2009,19 @@ gpkeep:()=>{S.gp.kill=false;render()},
 gpcancel:async()=>{const gp=S.gp;try{await pubPost(`/bookings/${gp.code}/cancel`);gp.kill=false;toast('Booking cancelled. Thank you for letting us know.');await loadStatus();if(!GUEST)refresh()}catch(e){gp.kill=false;toast(e.message);render()}},
 });
 Object.assign(ACT,{gf:v=>{S.gf=v;render()}});
+
+/* ---------- share the booking page: a link per channel, QR, website button ---------- */
+const SHARE=[['instagram','Instagram bio','Profile → Edit profile → Links → Add external link.'],['google','Google Maps','Google Business Profile → Edit profile → Booking → Add link, or Reservations link.'],['whatsapp','WhatsApp','Business profile website, status and replies.'],['tiktok','TikTok bio','Profile → Edit profile → Website.'],['qr','Print','Table tents, the door, flyers. Download the QR below.']];
+function shareCard(VV){const base=`${location.origin}/book/${VV.slug}`,emb=`<script src="${location.origin}/embed.js" data-venue="${VV.slug}"></`+`script>`;
+  return `<div class="card share"><h3>Share your booking page</h3><p class="mute" style="font-size:14px;margin:2px 0 8px">One link for each place. Reports show which one brings the bookings.</p>
+  ${SHARE.map(([k,l,how])=>`<div class="shrow"><div><b>${l}</b><span>${esc(base)}?src=${k}</span><small class="mute">${how}</small></div><button class="btn ghost sm" data-a="shcopy" data-v="${k}">Copy</button></div>`).join('')}
+  <div class="shqr"><span class="qr">${qrSVG(base+'?src=qr')}</span><div><b>QR code</b><small class="mute">Scans open your booking page.</small><button class="btn ghost sm" data-a="shqr">Download PNG</button></div></div>
+  <div class="shrow" style="border:0"><div><b>Button on your website</b><code>${esc(emb)}</code><small class="mute">Paste before &lt;/body&gt;. Adds a "Book a table" button that opens booking on top of your site.</small></div><button class="btn ghost sm" data-a="shcopy" data-v="embed">Copy</button></div></div>`}
+Object.assign(ACT,{
+shcopy:v=>{const VV=VENUES[S.vi],t=v==='embed'?`<script src="${location.origin}/embed.js" data-venue="${VV.slug}"></`+`script>`:`${location.origin}/book/${VV.slug}?src=${v}`;try{navigator.clipboard.writeText(t)}catch(_){}toast(v==='embed'?'Code copied. Send it to whoever runs your website.':'Link copied')},
+shqr:()=>{const VV=VENUES[S.vi],q=qrcode(0,'M');q.addData(`${location.origin}/book/${VV.slug}?src=qr`);q.make();const n=q.getModuleCount(),sc=24,pad=4*sc,c=document.createElement('canvas');c.width=c.height=n*sc+pad*2;
+  const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.fillStyle='#12153f';for(let r=0;r<n;r++)for(let k=0;k<n;k++)if(q.isDark(r,k))x.fillRect(pad+k*sc,pad+r*sc,sc,sc);
+  const a=document.createElement('a');a.download=`${VV.slug}-booking-qr.png`;a.href=c.toDataURL('image/png');a.click()},
+});
+/** Where the guest came from (?src=instagram), kept for this visit. */
+function SRC(){try{const q=new URLSearchParams(location.search).get('src');if(q)sessionStorage.setItem('xtra.src',q);return q||sessionStorage.getItem('xtra.src')}catch(_){return null}}

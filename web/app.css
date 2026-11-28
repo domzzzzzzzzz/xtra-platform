@@ -856,3 +856,12 @@ video.cam{width:100%;border-radius:16px;background:#05061a;aspect-ratio:1;object
 @media(max-width:600px){.gladd{grid-template-columns:1fr 1fr}.gladd input{grid-column:1/-1}}
 a.btn{text-decoration:none}
 .linkbtn{border:0;background:none;color:#5b6280;text-decoration:underline;font-size:14px;padding:8px 0;align-self:center}
+.rsrc{margin:16px 0 8px;font-size:14px;color:var(--mute)}
+.share{display:flex;flex-direction:column;margin-top:6px}
+.shrow{display:flex;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
+.shrow>div{flex:1;display:flex;flex-direction:column;gap:2px;min-width:0}
+.shrow span{font-size:13px;color:var(--teal);overflow-wrap:anywhere}.shrow small{font-size:12px}
+.shrow code{font-size:12px;background:var(--panel2);border-radius:8px;padding:6px 8px;overflow-wrap:anywhere;white-space:normal}
+.shqr{display:flex;gap:14px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.shqr .qr{width:96px;height:96px;flex:none;background:#fff;border-radius:10px;padding:6px;display:block}.shqr .qr svg{width:100%;height:100%;display:block}
+.shqr>div{display:flex;flex-direction:column;gap:4px;align-items:flex-start}

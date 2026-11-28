@@ -27,6 +27,7 @@ import kitchen from './modules/kitchen.js';
 import shift from './modules/shift.js';
 import promoters from './modules/promoters.js';
 import reminders from './modules/reminders.js';
+import { embedScript, metaFor, withMeta } from './modules/share.js';
 import accounts from './modules/accounts.js';
 import legal from './modules/legal.js';
 import inbox, { unsubscribePage, whatsappWebhook } from './modules/inbox.js';
@@ -69,6 +70,14 @@ export async function buildApp(opts: FastifyServerOptions = {}) {
   const version = Date.now().toString(36);
   const html = (await readFile(path.join(webRoot, 'index.html'), 'utf8')).replace(/(\/web\/[\w./-]+\.(?:css|js))"/g, `$1?v=${version}"`);
   const page = async (_req: unknown, reply: any) => reply.header('Cache-Control', 'no-cache').type('text/html').send(html);
-  for (const route of ['/', '/book/:slug', '/b/:code', '/p/:token', '/t/:token', '/e/:eventId', '/o/:code', '/me', '/paid', '/pl/:token']) app.get(route, page);
+  for (const route of ['/', '/b/:code', '/p/:token', '/t/:token', '/o/:code', '/me', '/paid', '/pl/:token']) app.get(route, page);
+  // Venue and event links get their own title, preview picture and schema.org data, for WhatsApp, Instagram and Google.
+  const shared = (kind: 'book' | 'event', key: string) => async (req: any, reply: any) => {
+    const m = await metaFor(kind, req.params[key]).catch(() => null);
+    return reply.header('Cache-Control', 'no-cache').type('text/html').send(m ? withMeta(html, m) : html);
+  };
+  app.get('/book/:slug', shared('book', 'slug'));
+  app.get('/e/:eventId', shared('event', 'eventId'));
+  app.get('/embed.js', async (_req, reply) => reply.header('Cache-Control', 'public, max-age=3600').type('application/javascript').send(embedScript()));
   return app;
 }

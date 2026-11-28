@@ -28,7 +28,7 @@ export default async function reports(app: FastifyInstance) {
     const v = req.params.venueId;
     const prevTo = shift(from, -1), prevFrom = shift(prevTo, -span);
 
-    const [cur, prev, byMethod, days, topGuests, topItems, events] = await Promise.all([
+    const [cur, prev, byMethod, days, topGuests, topItems, events, sources] = await Promise.all([
       totals(v, from, to),
       totals(v, prevFrom, prevTo),
       db.execute(sql`select p.method, count(distinct p.tab_id) as n, coalesce(sum(p.amount),0) as total from tab_payments p join tabs t on t.id = p.tab_id
@@ -55,13 +55,15 @@ export default async function reports(app: FastifyInstance) {
           (select count(*) from tickets t join ticket_orders o on o.id = t.order_id where t.event_id = e.id and o.status = 'paid' and t.checked_in_at is not null) as checked_in,
           (select coalesce(sum(o.subtotal - o.discount),0) from ticket_orders o where o.event_id = e.id and o.status = 'paid' and o.kind = 'sale') as net
         from events e where e.venue_id = ${v} and ${night(sql`e.starts_at`)} between ${from} and ${to} order by e.starts_at`),
+      db.execute(sql`select source, count(*) as n, coalesce(sum(party_size),0) as people from reservations
+        where venue_id = ${v} and date between ${from} and ${to} and status in ('confirmed','arrived','completed','no_show') group by source order by n desc`),
     ]);
 
     return {
       from, to,
       previous: { from: prevFrom, to: prevTo, ...flat(prev) },
       money: { ...cur.money, byMethod: byMethod.rows.map((r) => ({ method: r.method ?? 'other', bills: n(r.n), total: n(r.total) })) },
-      bookings: cur.bookings,
+      bookings: { ...cur.bookings, bySource: sources.rows.map((r) => ({ source: String(r.source), bookings: n(r.n), people: n(r.people) })) },
       tickets: cur.tickets,
       days: days.rows.map((r) => ({ day: String(r.day), tables: n(r.tables), tickets: n(r.tickets), bookings: n(r.bookings), noShows: n(r.no_shows) })),
       topGuests: topGuests.rows.map((r) => ({ id: r.id, name: r.name, phone: r.phone, visits: n(r.visits), spend: n(r.spend), points: n(r.points), lastVisit: r.last_visit, tags: r.tags })),
