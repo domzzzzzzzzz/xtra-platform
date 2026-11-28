@@ -136,11 +136,11 @@ describe('Daily report', () => {
     expect(m.subject).toContain('Lumen Rooftop · last night');
     expect(m.body).toContain('Money in');
 
-    // Something happened last night: a paid bill.
-    const at = new Date(Date.now() - 86400_000);
-    at.setUTCHours(20, 0, 0, 0);
+    // A morning a few days back, so the other tests' money (made just now) is not
+    // on that night whatever the time of day. The night before it: a paid bill.
+    const ten = new Date(Date.now() - 3 * 86400_000); ten.setUTCHours(9, 0, 0, 0); // 11 AM Cairo
+    const at = new Date(ten.getTime() - 86400_000); at.setUTCHours(20, 0, 0, 0);
     await db.insert(schema.tabs).values({ venueId, status: 'paid', total: 250000, partySize: 2, payMethod: 'cash', paidAt: at });
-    const ten = new Date(); ten.setUTCHours(9, 0, 0, 0); // 11 AM Cairo
     expect(await runDailyReports(ten)).toBe(0); // off by default
     await api.patch(v(), { settings: { dailyReport: { on: true, emails: ['boss@lumen.eg'], phones: ['01000000001'] } } });
     expect(await runDailyReports(ten)).toBe(1);
@@ -148,7 +148,7 @@ describe('Daily report', () => {
     const sent = await db.select().from(schema.messages).where(and(like(schema.messages.kind, 'daily_report:%'), eq(schema.messages.channel, 'email')));
     expect(sent.map((s) => s.to)).toEqual(['boss@lumen.eg']);
     expect(sent[0].body).toContain('EGP 2,500');
-    const early = new Date(); early.setUTCHours(5, 0, 0, 0); // 7 AM Cairo
+    const early = new Date(ten); early.setUTCHours(5, 0, 0, 0); // 7 AM Cairo
     expect(await runDailyReports(early)).toBe(0);
   });
 

@@ -14,7 +14,7 @@ export const parse = <T extends ZodTypeAny>(s: T, data: unknown): z.infer<T> => 
   return r.data;
 };
 
-export type StaffToken = { kind: 'staff'; sub: string; sa?: boolean };
+export type StaffToken = { kind: 'staff'; sub: string; sa?: boolean; iat?: number };
 export type GuestToken = { kind: 'guest'; sub: string };
 
 export async function staffUser(req: FastifyRequest): Promise<StaffToken> {
@@ -25,6 +25,11 @@ export async function staffUser(req: FastifyRequest): Promise<StaffToken> {
   }
   const u = req.user as StaffToken | GuestToken;
   if (u.kind !== 'staff') throw new AppError(401, 'unauthorized', 'Please sign in');
+  // The account must still exist, signed in after its last password change, and
+  // admin rights come from the account now, not from when the token was made.
+  const [acc] = await db.select({ sa: schema.users.isSuperAdmin, pw: schema.users.passwordChangedAt }).from(schema.users).where(eq(schema.users.id, u.sub));
+  if (!acc || (acc.pw && u.iat && u.iat * 1000 < acc.pw.getTime() - 1000)) throw new AppError(401, 'unauthorized', 'Please sign in');
+  u.sa = acc.sa;
   return u;
 }
 
